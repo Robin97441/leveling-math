@@ -11,11 +11,18 @@ let _questionStartTime = null, _seriesTimes = [];
 let _seriesXpDelta = 0;           // accumulateur exact du delta XP de la série en cours
 let _seriesQuestionResults = [];  // { subcategory, category, isCorrect, responseTime } — pour coaching
 let xpMultiplier = 1;             // 1 ou 2. Passe à 2 après une série parfaite 10/10, retombe à 1 à la 1re erreur.
+let xpMultiplierLevelKey = null;  // Niveau dans lequel le bonus x2 a été gagné.
 let hasSavedSeries = false;
 let activeSeriesId = null;
 let activeSessionForQuiz = null;
 let _refreshPenaltyApplied = false; // true dès que la pénalité -10 XP a été enregistrée en base
 let _refreshPenaltyPending = false; // true entre la reprise (startQuiz) et la première réponse
+let isSubmitting = false;           // verrou très court contre le double clic.
+let pendingSupabaseSaves = 0;       // sauvegardes submit_answer en arrière-plan.
+let backgroundSaveChain = Promise.resolve(); // garantit l'ordre des RPC submit_answer.
+let isStartingQuiz = false;
+let countdownTimeouts = [];
+let countdownOverlayEl = null;
 
 const sounds = {
   correct: new Audio("data:audio/wav;base64,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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
@@ -214,9 +221,28 @@ function showRecordAnim(avgTime){
     setTimeout(() => ov.remove(), 350);
   }, 1200);
 }
+function clearCountdown(){
+  countdownTimeouts.forEach(id => clearTimeout(id));
+  countdownTimeouts = [];
+  if(countdownOverlayEl){
+    countdownOverlayEl.remove();
+    countdownOverlayEl = null;
+  }
+}
+function queueCountdownTimeout(fn, delay){
+  const id = setTimeout(() => {
+    countdownTimeouts = countdownTimeouts.filter(t => t !== id);
+    fn();
+  }, delay);
+  countdownTimeouts.push(id);
+  return id;
+}
 function showCountdown(callback){
+  clearCountdown();
+  console.log("[quiz-start] countdown start");
   const overlay = document.createElement('div');
   overlay.className = 'countdown-overlay';
+  countdownOverlayEl = overlay;
   const numEl = document.createElement('div');
   numEl.className = 'countdown-num';
   overlay.appendChild(numEl);
@@ -232,17 +258,21 @@ function showCountdown(callback){
     numEl.style.animation = '';
     playCountdownBeep(i < 3 ? 3-i : 0);
     i++;
-    if(i < steps.length){ setTimeout(tick, 1000); }
+    if(i < steps.length){ queueCountdownTimeout(tick, 1000); }
     else {
-      setTimeout(() => {
+      queueCountdownTimeout(() => {
         overlay.style.transition = 'opacity .25s';
         overlay.style.opacity = '0';
-        setTimeout(() => { overlay.remove(); callback(); }, 250);
+        queueCountdownTimeout(() => {
+          overlay.remove();
+          if(countdownOverlayEl === overlay) countdownOverlayEl = null;
+          Promise.resolve(callback()).catch(e => console.error("[quiz-start] countdown callback error:", e));
+        }, 250);
       }, 600);
     }
   }
   // Délai initial de 80ms : laisse le contexte audio (primeWebAudio) se stabiliser avant le premier bip
-  setTimeout(tick, 80);
+  queueCountdownTimeout(tick, 80);
 }
 
 const $ = id => document.getElementById(id);
@@ -260,15 +290,48 @@ function showPenaltyBanner(visible) {
 }
 
 function saveGame(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ xp, pseudo, soundEnabled, bestScore, statGames, statBestAvgTime, localSession, xpMultiplier }));
+  const authUserId = getActiveStorageUserId();
+  const payload = { xp, pseudo, soundEnabled, bestScore, statGames, statBestAvgTime, localSession, xpMultiplier, xpMultiplierLevelKey, authUserId };
+  localStorage.setItem(getSaveStorageKey(), JSON.stringify(payload));
   // Clé dédiée pour la session — indépendante du reste du jeu
-  if(localSession != null) localStorage.setItem("currentSession", String(localSession));
+  if(localSession != null) localStorage.setItem(getSessionStorageKey(), String(localSession));
+}
+function getActiveStorageUserId(){
+  return (typeof _currentAuthUserId !== "undefined" && _currentAuthUserId)
+    || window._currentAuthUserId
+    || localStorage.getItem("auth_user_id")
+    || null;
+}
+function getSaveStorageKey(){
+  const authUserId = getActiveStorageUserId();
+  return authUserId ? `${STORAGE_KEY}:${authUserId}` : STORAGE_KEY;
+}
+function getSessionStorageKey(){
+  const authUserId = getActiveStorageUserId();
+  return authUserId ? `currentSession:${authUserId}` : "currentSession";
 }
 function loadGame(){
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const authUserId = getActiveStorageUserId();
+  const storageKey = getSaveStorageKey();
+  const raw = localStorage.getItem(storageKey);
+  if(!raw && authUserId) {
+    console.log("[progress] aucune sauvegarde locale liée à user_id — ancienne sauvegarde globale ignorée", {
+      user_id: authUserId,
+      ignored_key: STORAGE_KEY
+    });
+    soundEnabled = true;
+    return;
+  }
   if(!raw) return;
   try {
     const d = JSON.parse(raw);
+    if(authUserId && d.authUserId && d.authUserId !== authUserId) {
+      console.warn("[progress] sauvegarde locale ignorée — user_id différent", {
+        expected: authUserId,
+        found: d.authUserId
+      });
+      return;
+    }
     xp = Number(d.xp) || 0;
     pseudo = d.pseudo || "";
     soundEnabled = d.soundEnabled !== false;
@@ -277,10 +340,12 @@ function loadGame(){
     const _loaded = Number(d.statBestAvgTime);
     statBestAvgTime = (Number.isFinite(_loaded) && _loaded > 0) ? _loaded : null;
     // Priorité à la clé dédiée, fallback sur l'objet principal
-    const dedicatedSession = localStorage.getItem("currentSession");
+    const dedicatedSession = localStorage.getItem(getSessionStorageKey());
     localSession = dedicatedSession != null ? Number(dedicatedSession)
       : (d.localSession != null ? Number(d.localSession) : null);
-    xpMultiplier = (Number(d.xpMultiplier) === 2) ? 2 : 1;
+    xpMultiplierLevelKey = d.xpMultiplierLevelKey || null;
+    xpMultiplier = (Number(d.xpMultiplier) === 2 && xpMultiplierLevelKey) ? 2 : 1;
+    if(xpMultiplier === 2) console.log("[bonus-x2] bonus actif restauré localement pour le niveau", xpMultiplierLevelKey);
   } catch(e) {}
 }
 
@@ -314,6 +379,14 @@ function loadSeriesState(){
     if(!raw) return null;
     const s = JSON.parse(raw);
     if(!s || !s.questions || !s.levelKey) return null;
+    if(Number(s.questionIndex) >= s.questions.length) {
+      console.log("[quiz-start] état série terminé ignoré", {
+        questionIndex: s.questionIndex,
+        total: s.questions.length
+      });
+      localStorage.removeItem(SERIES_STATE_KEY);
+      return null;
+    }
     // Invalider si l'élève a changé de pseudo
     if(s.pseudo !== pseudo) return null;
     // Invalider si l'état est trop vieux (> 2 heures) — série abandonnée
@@ -328,6 +401,25 @@ function loadSeriesState(){
 // Supprime l'état persisté. Appelé à la fin de série ou abandon explicite.
 function clearSeriesState(){
   localStorage.removeItem(SERIES_STATE_KEY);
+}
+
+function clearXpBonus(reason = "unknown") {
+  if(xpMultiplier === 2) {
+    console.log("[bonus-x2] bonus nettoyé :", reason, "| niveau =", xpMultiplierLevelKey);
+  }
+  xpMultiplier = 1;
+  xpMultiplierLevelKey = null;
+  saveGame();
+  renderXpMultBadge();
+}
+
+function showBonusLostMessage(message = "Bonus x2 perdu.") {
+  console.log("[bonus-x2]", message);
+  if(feedbackEl) {
+    feedbackEl.className = "feedback feedback-lost";
+    feedbackEl.textContent = message;
+    triggerFeedbackAnim();
+  }
 }
 
 function renderStats(avgTime){
@@ -345,11 +437,14 @@ function lockPseudo(){
 function unlockPseudo(){
   // Reset variables mémoire
   pseudo = ""; xp = 0; bestScore = 0; score = 0; streak = 0;
+  xpMultiplier = 1; xpMultiplierLevelKey = null;
   statGames = 0; statBestAvgTime = null;
   localSession = null; activeSessionForQuiz = null; activeSeriesId = null;
   currentRankIndex = 0; quizStarted = false; hasSavedSeries = false;
 
   // Reset localStorage
+  localStorage.removeItem(getSaveStorageKey());
+  localStorage.removeItem(getSessionStorageKey());
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem("currentSession");
   clearSeriesState(); // série en cours
@@ -949,11 +1044,7 @@ async function getAdaptiveWeights() {
   try {
     const student = await window.saveStudent(pseudo);
     if (!student) return {};
-    const supabase = window.supabase.createClient(
-      "https://ypfgfvwpqcamcimppxaf.supabase.co",
-      "sb_publishable_j8u0ZTsNqHhSHL9jLmp9Sw_EuKb1ZKi"
-    );
-    const { data, error } = await supabase
+    const { data, error } = await _qClient
       .from("question_results")
       .select("subcategory, is_correct")
       .eq("student_id", student.id)
@@ -1041,6 +1132,7 @@ function updateRankUI(){
 function renderXpMultBadge(){
   const badge = document.getElementById("xpMultBadge");
   if(xpMultiplier === 2){
+    console.log("[bonus-x2] bonus actif", { level: xpMultiplierLevelKey });
     document.body.classList.add("bonus-x2");
     if(badge) badge.classList.remove("hidden");
   } else {
@@ -1051,6 +1143,8 @@ function renderXpMultBadge(){
 function activateXpBonus(){
   if(xpMultiplier === 2) return;
   xpMultiplier = 2;
+  xpMultiplierLevelKey = currentLevelKey;
+  console.log("[bonus-x2] bonus activé pour le niveau", xpMultiplierLevelKey);
   saveGame();
   renderXpMultBadge();
 }
@@ -1058,6 +1152,8 @@ let bonusLost = false;
 function breakXpBonus(){
   if(xpMultiplier !== 2) return;
   xpMultiplier = 1;
+  xpMultiplierLevelKey = null;
+  console.log("[bonus-x2] bonus perdu par erreur ou timeout");
   saveGame();
   renderXpMultBadge();
   try { playRankDownSound(); } catch(e) {}
@@ -1095,6 +1191,76 @@ function applyXp(delta){
     console.error("applyXp error", e);
   }
 }
+
+function syncXpFromServerQuietly(reason = "background") {
+  if (typeof _qClient === "undefined" || typeof syncStudentFromSupabase !== "function") return;
+  _qClient.auth.getUser()
+    .then(({ data, error }) => {
+      if (error) {
+        console.error("[progress] sync serveur impossible après", reason, error);
+        return;
+      }
+      if (data?.user) {
+        console.log("[progress] sync serveur discrète", reason);
+        return syncStudentFromSupabase(data.user);
+      }
+    })
+    .catch(e => console.error("[progress] sync serveur discrète exception:", e));
+}
+
+function submitAnswerInBackground(args, rollbackSnapshot) {
+  pendingSupabaseSaves++;
+  console.log("[progress] sauvegarde réponse en arrière-plan", {
+    pendingSupabaseSaves,
+    session_id: activeSessionForQuiz,
+    series_id: activeSeriesId,
+    is_correct: args[0],
+    category: args[2],
+    subcategory: args[3]
+  });
+
+  const runSave = async () => {
+    try {
+      let saved = await saveQuestionResult(...args);
+      if (!saved) {
+        console.warn("[progress] submit_answer échec — retry court");
+        await new Promise(r => setTimeout(r, 1200));
+        saved = await saveQuestionResult(...args);
+      }
+
+      if (!saved) {
+        console.error("❌ Réponse non sauvegardée après retry submit_answer", {
+          rollbackSnapshot,
+          args
+        });
+        alert("La sauvegarde Supabase de ta dernière réponse a échoué. Ta progression va être resynchronisée.");
+        syncXpFromServerQuietly("submit_answer_failed");
+        return false;
+      }
+
+      console.log("[progress] réponse sauvegardée en arrière-plan");
+      return true;
+    } catch(e) {
+      console.error("❌ Exception sauvegarde réponse en arrière-plan:", e);
+      alert("Erreur de sauvegarde Supabase. Ta progression va être resynchronisée.");
+      syncXpFromServerQuietly("submit_answer_exception");
+      return false;
+    } finally {
+      pendingSupabaseSaves = Math.max(0, pendingSupabaseSaves - 1);
+      console.log("[progress] sauvegarde arrière-plan terminée", { pendingSupabaseSaves });
+    }
+  };
+
+  backgroundSaveChain = backgroundSaveChain.then(runSave, runSave);
+  return backgroundSaveChain;
+}
+
+window.addEventListener("beforeunload", (event) => {
+  if (pendingSupabaseSaves > 0) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
 function startTimer(){
   clearInterval(timerInterval);
   timerEl.classList.remove("timer-critical");
@@ -1117,6 +1283,7 @@ function startTimer(){
 }
 function showQuestion(){
   if(currentQuestionIndex >= questions.length) return endQuiz();
+  hideLoadingState();
   const q = questions[currentQuestionIndex];
   currentAnswer = q.answer.value;
   currentAnswerDisplay = valueToDisplay(q.answer);
@@ -1130,18 +1297,97 @@ function showQuestion(){
   feedbackEl.className = "feedback";
   feedbackEl.textContent = "";
   resultEl.textContent = "";
+  resultEl.classList.remove("challenge-result");
   updateProgressBar();
   _questionStartTime = Date.now();
   setQuestionLock(false);
   // Animation d'entrée de la carte question
   const qCard = document.querySelector(".question-card");
-  if(qCard){ qCard.classList.remove("question-enter","flash-good","flash-bad","shake"); qCard.getBoundingClientRect(); qCard.classList.add("question-enter"); }
+  if(qCard){ qCard.classList.remove("challenge-complete","question-enter","flash-good","flash-bad","shake"); qCard.getBoundingClientRect(); qCard.classList.add("question-enter"); }
   // Focus uniquement sur desktop — sur touch, focus() déclenche le clavier
   // natif iOS même avec inputmode="none" sur certaines versions Safari.
   if (!isTouchDevice) {
     setTimeout(() => { try { answerInputEl.focus(); } catch(e){} }, 80);
   }
   startTimer();
+}
+function isFinishedQuizState(){
+  return !quizStarted && Array.isArray(questions) && questions.length > 0 && currentQuestionIndex >= questions.length;
+}
+async function beginQuizStart({ source, levelKey = currentLevelKey, forceNew = false } = {}){
+  if(isStartingQuiz){
+    console.log("[quiz-start] blocked because already starting", { source, levelKey });
+    return;
+  }
+  isStartingQuiz = true;
+  console.log(`[quiz-start] click ${source || "unknown"}`, {
+    levelKey,
+    forceNew,
+    quizStarted,
+    currentQuestionIndex,
+    currentLevelKey,
+    activeSessionForQuiz,
+    isSubmitting,
+    pendingSupabaseSaves
+  });
+  try {
+    clearCountdown();
+    clearInterval(timerInterval); timerInterval = null;
+    timerEl.classList.remove("timer-critical");
+    setQuestionLock(true);
+    showLoadingState("Préparation de la nouvelle série...");
+
+    if(pendingSupabaseSaves > 0){
+      showLoadingState("Sauvegarde de ta dernière réponse...");
+      console.log("[quiz-start] attente sauvegardes en cours avant nouvelle série", { pendingSupabaseSaves });
+      await backgroundSaveChain.catch(e => console.error("[quiz-start] attente sauvegardes échouée:", e));
+      showLoadingState("Préparation de la nouvelle série...");
+    }
+
+    if(levelKey){
+      currentLevelKey = levelKey;
+      currentLevel = LEVELS[levelKey];
+      updateActiveButton(levelKey);
+    }
+
+    if(forceNew){
+      clearSeriesState();
+      currentQuestionIndex = 0;
+      questions = [];
+      score = 0;
+      streak = 0;
+      _seriesTimes = [];
+      _seriesXpDelta = 0;
+      _seriesQuestionResults = [];
+      activeSeriesId = null;
+      activeSessionForQuiz = null;
+      hasSavedSeries = false;
+      _refreshPenaltyApplied = false;
+      _refreshPenaltyPending = false;
+      quizStarted = false;
+      updateStreak(0);
+    }
+
+    if(currentLevelKey === "intermediate"){
+      _adaptiveWeights = await getAdaptiveWeights();
+    } else {
+      _adaptiveWeights = {};
+    }
+    _lastSubcategory = null;
+
+    hideLoadingState();
+    showCountdown(async () => {
+      try {
+        await startQuiz({ forceNew });
+      } finally {
+        isStartingQuiz = false;
+      }
+    });
+  } catch(e) {
+    isStartingQuiz = false;
+    console.error("[quiz-start] erreur démarrage:", e);
+    showLoadingState("Impossible de charger ta progression. Vérifie ta connexion.", true);
+  }
 }
 function triggerFlash(type){
   const qCard = document.querySelector(".question-card");
@@ -1160,6 +1406,32 @@ function triggerFeedbackAnim(){
   feedbackEl.classList.remove("feedback-show");
   feedbackEl.getBoundingClientRect();
   feedbackEl.classList.add("feedback-show");
+}
+function showLoadingState(message = "Chargement de ta progression...", isError = false){
+  console.log("[loading] show", message);
+  const qCard = document.querySelector(".question-card");
+  if(qCard){
+    qCard.classList.remove("challenge-complete","question-enter","flash-good","flash-bad","shake");
+    qCard.classList.add("loading-state");
+    qCard.classList.toggle("loading-error", !!isError);
+  }
+  if(selectedLevelEl) selectedLevelEl.textContent = isError ? "Connexion impossible" : "Préparation";
+  if(questionEl) {
+    questionEl.innerHTML = isError
+      ? message
+      : `<span class="loading-spinner-inline" aria-hidden="true"></span><span>${message}</span>`;
+  }
+  if(helperEl) helperEl.textContent = isError ? "Impossible de charger ta progression. Vérifie ta connexion." : "";
+  if(resultEl) {
+    resultEl.classList.remove("challenge-result");
+    resultEl.textContent = "";
+  }
+  if(feedbackEl){ feedbackEl.className = "feedback"; feedbackEl.textContent = ""; }
+}
+function hideLoadingState(){
+  console.log("[loading] hide");
+  const qCard = document.querySelector(".question-card");
+  if(qCard) qCard.classList.remove("loading-state","loading-error");
 }
 function showCorrectionAndContinue(){
   clearInterval(timerInterval); timerInterval = null;
@@ -1191,20 +1463,24 @@ function handleTimeout(){
   console.log("QUESTION AVANT SAVE (timeout) =", _q);
   console.log("PAYLOAD SAVE =", { questionText: _qtext, expectedAnswer: _expected, answerDisplay: _expected, subcategory: _subcat, userAnswer: "", isCorrect: false });
   if(_questionStartTime) _seriesTimes.push(_rt);
+  const rollbackSnapshot = { xp, score, streak, questionIndex: currentQuestionIndex, activeSeriesId };
   breakXpBonus();
   const _timeoutXpDelta = currentLevel.timeout > 0 ? -currentLevel.timeout : 0;
   _seriesXpDelta += _timeoutXpDelta;
   _seriesQuestionResults.push({ subcategory: _subcat, category: _cat, isCorrect: false, responseTime: _rt });
-  saveQuestionResult(false, _rt, _cat, _timeoutXpDelta, _subcat, _qtext, _expected, "");
   if(currentLevel.timeout>0) applyXp(-currentLevel.timeout);
+  submitAnswerInBackground(
+    [false, _rt, _cat, _subcat, _qtext, _expected, "", "timeout"],
+    rollbackSnapshot
+  );
   updateSeriesProgress();
   playWrongSound();
   animStreak("break"); updateStreak(0);
   saveSeriesState(); // fige l'état après timeout
   showCorrectionAndContinue();
 }
-function checkAnswer(){
-  if(!quizStarted || questionLocked) return;
+async function checkAnswer(){
+  if(!quizStarted || questionLocked || isSubmitting) return;
   const input = answerInputEl.value.trim();
   if(!input){
     feedbackEl.className = "feedback";
@@ -1212,7 +1488,9 @@ function checkAnswer(){
     triggerFeedbackAnim();
     return;
   }
+  isSubmitting = true;
   setQuestionLock(true);
+  setTimeout(() => { isSubmitting = false; }, 250);
   clearInterval(timerInterval); timerInterval = null;
   timerEl.classList.remove("timer-critical");
   const _rt = _questionStartTime ? (Date.now() - _questionStartTime) / 1000 : null;
@@ -1229,13 +1507,17 @@ function checkAnswer(){
   console.log("QUESTION AVANT SAVE =", _q);
   console.log("PAYLOAD SAVE =", { questionText: _qtext, expectedAnswer: _expected, answerDisplay: _expected, subcategory: _subcat, userAnswer: input, isCorrect: _isCorrect });
   if(_questionStartTime) _seriesTimes.push(_rt);
+  const rollbackSnapshot = { xp, score, streak, questionIndex: currentQuestionIndex, activeSeriesId };
   if(_isCorrect){
     const _gain = currentLevel.gain * xpMultiplier;
     _seriesXpDelta += _gain;
     _seriesQuestionResults.push({ subcategory: _subcat, category: _cat, isCorrect: true, responseTime: _rt });
-    saveQuestionResult(true, _rt, _cat, _gain, _subcat, _qtext, _expected, input);
     score++;
     applyXp(_gain);
+    submitAnswerInBackground(
+      [true, _rt, _cat, _subcat, _qtext, _expected, input, "answer"],
+      rollbackSnapshot
+    );
     updateSeriesProgress();
     playCorrectSound();
     feedbackEl.className = "feedback feedback-good";
@@ -1256,8 +1538,11 @@ function checkAnswer(){
     const _wrongXpDelta = currentLevel.wrong > 0 ? -currentLevel.wrong : 0;
     _seriesXpDelta += _wrongXpDelta;
     _seriesQuestionResults.push({ subcategory: _subcat, category: _cat, isCorrect: false, responseTime: _rt });
-    saveQuestionResult(false, _rt, _cat, _wrongXpDelta, _subcat, _qtext, _expected, input);
     if(currentLevel.wrong > 0) applyXp(-currentLevel.wrong);
+    submitAnswerInBackground(
+      [false, _rt, _cat, _subcat, _qtext, _expected, input, "answer"],
+      rollbackSnapshot
+    );
     updateSeriesProgress();
     playWrongSound();
     scoreEl.textContent = score;
@@ -1380,8 +1665,11 @@ function buildCoachingFeedback(pct, avgTime) {
 }
 
 function endQuiz(){
+  hideLoadingState();
   quizStarted = false;
+  isSubmitting = false;
   clearInterval(timerInterval); timerInterval = null;
+  clearCountdown();
   timerEl.classList.remove("timer-critical");
   timerEl.style.color = "white";
   timerEl.textContent = "0";
@@ -1389,7 +1677,7 @@ function endQuiz(){
   const total = questions.length;
   const pct = Math.round((score / total) * 100);
   bestScore = Math.max(bestScore, score);
-  statGames++;
+  // `games_played` est recalculé côté Supabase par submit_answer().
   let avgTime = null;
   if(_seriesTimes.length > 0){
     avgTime = _seriesTimes.reduce((a,b) => a+b, 0) / _seriesTimes.length;
@@ -1405,6 +1693,9 @@ function endQuiz(){
   renderStats(avgTime);
   saveGame();
   updateLevelButtons();
+  const qCard = document.querySelector(".question-card");
+  if(qCard) qCard.classList.add("challenge-complete");
+  selectedLevelEl.textContent = "Niveau : " + (currentLevel?.name || "aucun");
   questionEl.textContent = "Fin du défi";
   helperEl.textContent = "Tu peux relancer une partie ou changer de niveau.";
   const _bonusWasActive = xpMultiplier === 2;
@@ -1438,6 +1729,7 @@ function endQuiz(){
     <div style="font-size:14px;font-weight:700">${xpLine}</div>
     ${buildCoachingFeedback(pct, avgTime)}
   `;
+  resultEl.classList.add("challenge-result");
   answerInputEl.classList.add("hidden");
   validateBtnEl.classList.add("hidden");
   restartBtnEl.classList.remove("hidden");
@@ -1446,50 +1738,41 @@ function endQuiz(){
   showPenaltyBanner(false); // s'assurer que le banner est caché en fin de série
   setQuestionLock(true);
   
-  // Sauvegarde automatique de la série dans Supabase
+  // Les réponses ont déjà été enregistrées via la RPC submit_answer().
+  // Les agrégats series_results/students sont recalculés côté Supabase.
   if (!hasSavedSeries && pseudo) {
     hasSavedSeries = true;
-    const xpGained = _seriesXpDelta;
-    if (activeSeriesId) {
-      // Nouveau système : mettre à jour la ligne créée au début
-      (async () => {
-        try {
-          const student = await window.saveStudent(pseudo);
-          if (!student) return;
-          await _qClient.from("series_results").update({
-            score,
-            avg_time: avgTime,
-            xp_gained: xpGained,
-            streak_max: streak
-          }).eq("id", activeSeriesId);
-          // Mettre à jour students.xp_total avec le vrai delta (pas score×gain)
-          const updatedStudent = {
-            xp_total: (student.xp_total || 0) + xpGained,
-            best_score: Math.max(student.best_score || 0, score || 0),
-            best_avg_time: student.best_avg_time == null ? avgTime : (avgTime ? Math.min(student.best_avg_time, avgTime) : student.best_avg_time),
-            games_played: (student.games_played || 0) + 1,
-            updated_at: new Date().toISOString()
-          };
-          await _qClient.from("students").update(updatedStudent).eq("id", student.id);
-          console.log("📤 Série mise à jour (id:", activeSeriesId, ") — xp_gained:", xpGained, "(Σ xp_delta)");
-        } catch(e) {
-          console.error("❌ Erreur mise à jour série:", e);
-        }
-      })();
-    } else if (typeof window.saveSeriesResult === "function") {
-      // Fallback ancien système (pas de activeSeriesId)
-      window.saveSeriesResult({
-        pseudo, level: currentLevelKey, score, avgTime, xpGained, streakMax: streak
-      }).then(r => r && console.log("📤 Série sauvegardée (fallback):", r))
-        .catch(e => console.error("❌ Erreur sauvegarde série:", e));
-    }
+    console.log("📤 Série finalisée localement — agrégats serveur gérés par submit_answer(), id:", activeSeriesId);
   }
 }
-async function startQuiz(){
+async function startQuiz({ forceNew = false } = {}){
+  showLoadingState("Chargement de ta progression...");
+  if (window._authReadyPromise) {
+    console.log("[progress] attente sync auth avant démarrage série");
+    await window._authReadyPromise;
+  }
+  if (!pseudo && typeof _qClient !== "undefined") {
+    try {
+      const { data: authData, error: authErr } = await _qClient.auth.getUser();
+      if (authErr) console.error("[progress] auth.getUser avant startQuiz:", authErr);
+      if (authData?.user && typeof syncStudentFromSupabase === "function") {
+        await syncStudentFromSupabase(authData.user);
+      }
+    } catch(e) {
+      console.error("[progress] sync avant startQuiz échouée:", e);
+    }
+  }
+  if (!pseudo) {
+    console.error("❌ startQuiz annulé — aucun pseudo hydraté depuis Supabase/localStorage");
+    showLoadingState("Impossible de charger ta progression. Vérifie ta connexion.", true);
+    return;
+  }
+
+  showLoadingState("Chargement de ta série...");
   // ── Reprise après refresh ────────────────────────────────────────────────
   // Si une série en cours existe pour le même élève et niveau, on la reprend.
   // Cela empêche le reroll : les questions sont figées dès le démarrage.
-  const savedState = loadSeriesState();
+  const savedState = forceNew ? null : loadSeriesState();
   const isResume = savedState && savedState.levelKey === currentLevelKey;
 
   if(isResume){
@@ -1523,10 +1806,40 @@ async function startQuiz(){
     clearSeriesState();
   }
 
-  console.log("[QUIZ] startQuiz entered");
+  console.log("[QUIZ] startQuiz entered", { forceNew, isResume, currentLevelKey, currentQuestionIndex });
 
-  // Persister l'état immédiatement — les questions sont maintenant figées
-  // Un refresh retrouvera exactement cette série, pas une nouvelle
+  if(typeof window.saveStudent === "function"){
+    showLoadingState("Chargement de ta progression...");
+    console.log("[QUIZ] saveStudent start avant affichage question");
+    const student = await window.saveStudent(pseudo);
+    console.log("[QUIZ] saveStudent done", student ? {
+      student_id: student.id,
+      pseudo: student.pseudo,
+      session: student.session,
+      xp_supabase: student.xp_total
+    } : "null");
+    if(student){
+      activeSessionForQuiz = student.session || 1;
+      localSession = activeSessionForQuiz;
+      saveGame();
+      console.log("[quiz-start] session ready", {
+        student_id: student.id,
+        session_id: activeSessionForQuiz,
+        activeSeriesId
+      });
+    } else {
+      console.error("❌ Impossible de récupérer/créer le student — série non démarrée");
+      showLoadingState("Impossible de charger ta progression. Vérifie ta connexion.", true);
+      return;
+    }
+  } else {
+    console.error("❌ startQuiz annulé — window.saveStudent indisponible");
+    showLoadingState("Impossible de charger ta progression. Vérifie ta connexion.", true);
+    return;
+  }
+
+  // Persister l'état immédiatement après avoir fixé la session Supabase.
+  // Un refresh retrouvera exactement cette série, pas une nouvelle.
   saveSeriesState();
 
   // Lancer l'UI immédiatement sans attendre Supabase
@@ -1556,20 +1869,26 @@ async function startQuiz(){
   }
   console.log("[QUIZ] showQuestion called");
   showQuestion();
-
-  // Récupérer la session Supabase en arrière-plan — n'empêche pas la série
-  if(pseudo && typeof window.saveStudent === "function"){
-    console.log("[QUIZ] saveStudent start");
-    window.saveStudent(pseudo).then(student => {
-      console.log("[QUIZ] saveStudent done", student ? "ok" : "null");
-      if(student){ activeSessionForQuiz = student.session || 1; }
-      else { console.error("❌ Impossible de récupérer le student"); }
-    }).catch(e => {
-      console.error("Erreur init partie:", e);
-    });
-  }
+  console.log("[quiz-start] first question rendered", {
+    currentQuestionIndex,
+    currentLevelKey,
+    activeSessionForQuiz
+  });
 }
 async function selectLevel(levelKey){
+  const wasFinished = isFinishedQuizState();
+  const forceNew = wasFinished || levelKey !== currentLevelKey;
+  if(xpMultiplier === 2 && xpMultiplierLevelKey && xpMultiplierLevelKey !== levelKey){
+    const ok = confirm("Changer de niveau fera perdre ton bonus x2. Continuer ?");
+    if(!ok){
+      console.log("[bonus-x2] changement de niveau annulé, bonus conservé", { from: xpMultiplierLevelKey, to: levelKey });
+      return;
+    }
+    console.log("[bonus-x2] bonus perdu par changement de niveau", { from: xpMultiplierLevelKey, to: levelKey });
+    clearXpBonus("level_change");
+    clearSeriesState();
+    showBonusLostMessage("Bonus x2 perdu en changeant de niveau.");
+  }
   if(levelKey === "beginner" && xp >= 700){
     console.log("🚫 Niveau Débutant bloqué (XP:", xp, ")");
     return;
@@ -1578,29 +1897,7 @@ async function selectLevel(levelKey){
     console.log("🚫 Niveau Intermédiaire bloqué (XP:", xp, ")");
     return;
   }
-  // Nettoyage : effacer l'état persisté seulement si c'est un niveau différent
-  // ou si aucune série en cours pour ce niveau+pseudo.
-  // Si l'élève reprend le même niveau (ex: refresh), on préserve l'état
-  // pour que startQuiz puisse reprendre la même série (anti-reroll).
-  const existingState = loadSeriesState();
-  const isResumable = existingState && existingState.levelKey === levelKey;
-  if(!isResumable){
-    clearSeriesState();
-  }
-  clearInterval(timerInterval); timerInterval = null;
-  timerEl.classList.remove("timer-critical");
-  quizStarted = false;
-  currentLevelKey = levelKey;
-  currentLevel = LEVELS[levelKey];
-  updateActiveButton(levelKey);
-  // Charger les poids adaptatifs silencieusement avant de lancer
-  if(levelKey === "intermediate"){
-    _adaptiveWeights = await getAdaptiveWeights();
-  } else {
-    _adaptiveWeights = {};
-  }
-  _lastSubcategory = null;
-  showCountdown(() => startQuiz());
+  await beginQuizStart({ source: "level", levelKey, forceNew });
 }
 
 $("savePseudoBtn").addEventListener("click", savePseudo);
@@ -1611,7 +1908,13 @@ $("btn-intermediate").addEventListener("click", async () => { primeEmbeddedAudio
 
 $("btn-expert").addEventListener("click", async () => { primeEmbeddedAudio(); await primeWebAudio(); selectLevel("expert"); });
 validateBtnEl.addEventListener("click", () => { primeEmbeddedAudio(); checkAnswer(); });
-restartBtnEl.addEventListener("click", async () => { if(currentLevelKey) { primeEmbeddedAudio(); await primeWebAudio(); showCountdown(() => startQuiz()); } });
+restartBtnEl.addEventListener("click", async () => {
+  if(currentLevelKey) {
+    primeEmbeddedAudio();
+    await primeWebAudio();
+    beginQuizStart({ source: "replay", levelKey: currentLevelKey, forceNew: true });
+  }
+});
 answerInputEl.addEventListener("keydown", e => { if(e.key === "Enter" && !questionLocked) { primeEmbeddedAudio(); checkAnswer(); } });
 
 /* ── Détection appareils tactiles (mobile + iPad) ───────────────────────── */
@@ -1766,53 +2069,30 @@ async function syncStudentFromSupabase(authUser = null) {
 
   try {
     console.log("[SYNC] start — pseudo:", pseudoToUse);
+    if (authUser) {
+      _currentAuthUserId = authUser.id;
+      window._currentAuthUserId = authUser.id;
+    }
 
-    const queryPromise = _qClient
-      .from("students")
-      .select("*")
-      .ilike("pseudo", pseudoToUse)
-      .maybeSingle();
-    const timeoutPromise = new Promise(resolve =>
-      setTimeout(() => resolve({ data: null, error: { message: "timeout" } }), 2000)
-    );
-    let { data: existing, error: qErr } = await Promise.race([queryPromise, timeoutPromise]);
-
-    if (qErr?.message === "timeout") {
-      console.warn("[SYNC] students query timeout — restauration abandonnée silencieusement");
-      console.log("[SYNC] hydration skipped");
+    if (typeof window.saveStudent !== "function") {
+      console.error("[sync] ❌ saveStudent indisponible — impossible de garantir la progression Supabase");
       return;
     }
 
-    if (qErr) {
-      console.warn("[SYNC] retry — première tentative échouée:", qErr.message);
-      await new Promise(r => setTimeout(r, 500));
-      ({ data: existing, error: qErr } = await _qClient
-        .from("students")
-        .select("*")
-        .ilike("pseudo", pseudoToUse)
-        .maybeSingle());
-    }
-
-    if (qErr) {
-      console.error("[sync] ❌ Erreur requête Supabase après retry:", qErr);
-      return;
-    }
-    console.log("[SYNC] success — résultat:", existing ? `trouvé (${existing.pseudo})` : "absent");
-    console.log("[sync] Résultat DB:", existing
-      ? `✅ trouvé — id: ${existing.id} | pseudo: ${existing.pseudo} | session: ${existing.session}`
-      : "❌ absent (compte sans partie jouée ou pseudo inconnu)");
-
-    if (!existing) {
-      if (!authUser) {
-        console.log("[sync] Startup sans authUser : élève introuvable → reset local");
-        unlockPseudo();
-      } else {
-        console.log("[sync] Nouveau compte sans partie jouée → état vierge conservé");
-      }
+    const student = await window.saveStudent(pseudoToUse);
+    if (!student) {
+      console.error("[sync] ❌ Aucun student Supabase récupéré/créé — hydratation impossible");
       return;
     }
 
-    const student = existing;
+    console.log("[SYNC] success — student prêt", {
+      id: student.id,
+      pseudo: student.pseudo,
+      auth_user_id: student.auth_user_id,
+      session: student.session,
+      xp_supabase: student.xp_total
+    });
+
     const remoteSession = student.session || 1;
     console.log("[sync] Session locale:", localSession, "| session Supabase:", remoteSession);
 
@@ -1851,9 +2131,15 @@ async function syncStudentFromSupabase(authUser = null) {
       "| XP:", xp, "| bestScore:", bestScore,
       "| games:", statGames, "| session:", localSession);
 
-    localStorage.setItem("currentSession", String(localSession));
+    localStorage.setItem(getSessionStorageKey(), String(localSession));
     saveGame();
-    console.log("[sync] saveGame() OK — localStorage mis à jour");
+    console.log("[sync] saveGame() OK — localStorage user-scoped mis à jour", {
+      user_id: authUser?.id || null,
+      xp_local: xp,
+      xp_supabase: student.xp_total,
+      session_id: localSession,
+      source: "supabase"
+    });
     renderPseudo();
     updateRankUI();
     renderStats(null);

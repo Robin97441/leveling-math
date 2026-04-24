@@ -28,7 +28,7 @@ body::before {
   top: 0; left: 0;
   width: 100%; height: 100%;
   z-index: -2;
-  background: url('image.png') center / cover no-repeat;
+  background: url('assets/images/image.png') center / cover no-repeat;
   pointer-events: none;
 }
 body::after {
@@ -462,8 +462,13 @@ body::after {
   const STORAGE_KEY = "leveling_math_v38_save";
   let pseudo = "";
   let currentSession = 1;
+  let currentStudent = null;
 
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const storedAuthUserId = localStorage.getItem("auth_user_id");
+  const raw = storedAuthUserId ? null : localStorage.getItem(STORAGE_KEY);
+  if (storedAuthUserId) {
+    console.log("[stats] ancienne sauvegarde locale globale ignorée car un user_id est connu", storedAuthUserId);
+  }
   if (raw) {
     try {
       const d = JSON.parse(raw);
@@ -487,6 +492,81 @@ body::after {
       setVal("statBestTime", bestAvgTime);
       setVal("statSession", "S" + currentSession);
     } catch(e) {}
+  }
+
+  function renderSummaryFromStudent(student) {
+    if (!student) return;
+    pseudo = window.normalizePseudo ? window.normalizePseudo(student.pseudo) : student.pseudo;
+    currentSession = student.session || 1;
+    document.getElementById("pseudoBanner").textContent = window.formatPseudo ? window.formatPseudo(pseudo) : pseudo;
+    const setVal = (id, v) => {
+      const el = document.getElementById(id);
+      el.textContent = v;
+      el.classList.remove("empty");
+    };
+    setVal("statXp", Number(student.xp_total) || 0);
+    setVal("statGames", Number(student.games_played) || 0);
+    setVal("statBestScore", Number(student.best_score) || 0);
+    const bestAvgTime = Number(student.best_avg_time) > 0 ? Number(student.best_avg_time).toFixed(1) + " s" : "—";
+    setVal("statBestTime", bestAvgTime);
+    setVal("statSession", "S" + currentSession);
+  }
+
+  async function loadStudentContext() {
+    const { data: authData, error: authError } = await _qClient.auth.getUser();
+    if (authError) console.error("[stats] ❌ auth.getUser:", authError);
+    const user = authData?.user || null;
+    console.log("[stats] current user_id:", user?.id || null, "| email:", user?.email || null);
+
+    const scopedKey = user?.id ? `${STORAGE_KEY}:${user.id}` : STORAGE_KEY;
+    const scopedRaw = localStorage.getItem(scopedKey);
+    let scopedPseudo = "";
+    let scopedSession = null;
+    if (scopedRaw) {
+      try {
+        const d = JSON.parse(scopedRaw);
+        scopedPseudo = d.pseudo || "";
+        scopedSession = d.localSession ?? null;
+      } catch(e) {
+        console.error("[stats] ❌ lecture localStorage user-scoped:", e);
+      }
+    }
+
+    const metaPseudo = user?.user_metadata?.pseudo || "";
+    const mappedPseudo = user?.id ? localStorage.getItem("lm_uid_" + user.id) || "" : "";
+    const pseudoCandidate = metaPseudo || mappedPseudo || scopedPseudo || pseudo;
+    console.log("[stats] contexte progression", {
+      source_locale: scopedRaw ? scopedKey : "none",
+      pseudo_meta: metaPseudo || null,
+      pseudo_map: mappedPseudo || null,
+      pseudo_local_scoped: scopedPseudo || null,
+      pseudo_legacy: pseudo || null,
+      session_local_scoped: scopedSession,
+      pseudo_utilise: pseudoCandidate || null
+    });
+
+    if (!pseudoCandidate) {
+      console.error("[stats] ❌ Aucun pseudo disponible pour charger les statistiques Supabase");
+      return null;
+    }
+
+    if (user?.id) window._currentAuthUserId = user.id;
+    const student = await window.saveStudent(pseudoCandidate);
+    if (!student) {
+      console.error("[stats] ❌ saveStudent impossible — statistiques non chargées");
+      return null;
+    }
+
+    currentStudent = student;
+    renderSummaryFromStudent(student);
+    console.log("[stats] source utilisée au chargement: supabase", {
+      user_id: user?.id || null,
+      student_id: student.id,
+      pseudo: student.pseudo,
+      session_id: currentSession,
+      xp_supabase: student.xp_total
+    });
+    return student;
   }
 
   // ── Rendu initial vide ───────────────────────────────────────────────────
@@ -517,6 +597,7 @@ body::after {
 
   // ── Chargement Supabase ──────────────────────────────────────────────────
   async function loadCategoryStats() {
+    if (!currentStudent) await loadStudentContext();
     console.log("[stats] loadCategoryStats — pseudo:", JSON.stringify(pseudo), "| session:", currentSession);
 
     if (!pseudo) {
@@ -524,28 +605,23 @@ body::after {
       return;
     }
     if (typeof window.saveStudent !== "function") {
-      console.error("[stats] window.saveStudent non disponible — supabase-test.js bien chargé ?");
+      console.error("[stats] window.saveStudent non disponible — js/supabase/students.js bien chargé ?");
       return;
     }
 
-    const student = await window.saveStudent(pseudo);
-    console.log("[stats] saveStudent →", student ? `id=${student.id} | pseudo=${student.pseudo} | session DB=${student.session}` : "null");
+    const student = currentStudent || await window.saveStudent(pseudo);
+    console.log("[stats] student →", student ? `id=${student.id} | pseudo=${student.pseudo} | session DB=${student.session}` : "null");
     if (!student) {
       console.error("[stats] Élève introuvable en base → abandon");
       return;
     }
-
-    const supabase = window.supabase.createClient(
-      "https://ypfgfvwpqcamcimppxaf.supabase.co",
-      "sb_publishable_j8u0ZTsNqHhSHL9jLmp9Sw_EuKb1ZKi"
-    );
 
     // ── Pagination (Supabase tronque à 1000 lignes par défaut) ──────────────
     async function fetchPagedQR(extraFilters) {
       const BATCH = 1000;
       let all = [], from = 0;
       while (true) {
-        let q = supabase
+        let q = _qClient
           .from("question_results")
           .select("category, is_correct, response_time")
           .eq("student_id", student.id)
@@ -625,29 +701,23 @@ body::after {
     console.log("[stats] ✅ Cards rendues");
   }
 
-  loadCategoryStats();
-
   // ── Historique des dernières séries ─────────────────────────────────────
   async function loadRecentSeries() {
+    if (!currentStudent) await loadStudentContext();
     if (!pseudo) return;
-    const student = typeof window.saveStudent === "function"
-      ? await window.saveStudent(pseudo) : null;
+    const student = currentStudent || (typeof window.saveStudent === "function"
+      ? await window.saveStudent(pseudo) : null);
     if (!student) return;
-
-    const supabase = window.supabase.createClient(
-      "https://ypfgfvwpqcamcimppxaf.supabase.co",
-      "sb_publishable_j8u0ZTsNqHhSHL9jLmp9Sw_EuKb1ZKi"
-    );
 
     // Charger les 10 dernières séries + les lignes question_results pour détecter les pénalités
     const [{ data: series }, { data: penalties }] = await Promise.all([
-      supabase.from("series_results")
+      _qClient.from("series_results")
         .select("id, level, score, xp_gained, created_at")
         .eq("student_id", student.id)
         .eq("session", currentSession)
         .order("created_at", { ascending: false })
         .limit(10),
-      supabase.from("question_results")
+      _qClient.from("question_results")
         .select("series_id, xp_delta")
         .eq("student_id", student.id)
         .eq("session", currentSession)
@@ -658,7 +728,7 @@ body::after {
 
     // XP net réel par série depuis question_results (inclut les pénalités)
     // On reconstruit le Σ xp_delta pour chaque série connue
-    const { data: allDeltas } = await supabase.from("question_results")
+    const { data: allDeltas } = await _qClient.from("question_results")
       .select("series_id, xp_delta")
       .in("series_id", series.map(s => s.id));
 
@@ -698,7 +768,13 @@ body::after {
     document.getElementById("seriesSection").style.display = "";
   }
 
-  loadRecentSeries();
+  async function initStatsPage() {
+    await loadStudentContext();
+    await loadCategoryStats();
+    await loadRecentSeries();
+  }
+
+  initStatsPage().catch(e => console.error("[stats] ❌ initStatsPage:", e));
 </script>
 
 <div id="cursor-trail" aria-hidden="true"></div>

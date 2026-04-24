@@ -252,6 +252,8 @@ async function authSubmit() {
 }
 
 async function authSignOut() {
+  if (typeof clearXpBonus === "function") clearXpBonus("logout");
+  else console.log("[bonus-x2] nettoyage logout demandé, clearXpBonus indisponible");
   await _qClient.auth.signOut();
   _authShowOverlay();
 }
@@ -280,7 +282,11 @@ async function _authShowApp(user, fromLogin = false) {
   }
   _authShowAppInProgress = true;
   _currentAuthUserId = user.id;
+  window._currentAuthUserId = user.id;
+  window._levelingMathAuthUser = user;
   console.log("[auth] _authShowApp start — user:", user.email, "id:", user.id.slice(0, 8) + "…", "fromLogin:", fromLogin);
+  if (typeof clearXpBonus === "function") clearXpBonus(fromLogin ? "login" : "auth_restore");
+  else console.log("[bonus-x2] nettoyage login demandé, clearXpBonus indisponible");
 
   const storedUserId = localStorage.getItem("auth_user_id");
   if (storedUserId !== null && storedUserId !== user.id) {
@@ -298,7 +304,7 @@ async function _authShowApp(user, fromLogin = false) {
   const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   if (fromLogin && overlay && !reduceMotion) {
-    // On retire auth-visible AVANT l'animation : le vrai bg de l'app (bg.png
+    // On retire auth-visible AVANT l'animation : le vrai bg de l'app (assets/images/bg.png
     // + gradients) est rendu derrière l'overlay encore opaque, donc la carte
     // fade révèle un fond déjà en place (plus de "pop in" du background).
     document.body.classList.remove("auth-visible");
@@ -318,17 +324,23 @@ async function _authShowApp(user, fromLogin = false) {
   _authShowAppInProgress = false;
   console.log("[AUTH] app shown", fromLogin ? "with transition" : "immediately");
 
-  // Restauration du profil en arrière-plan (300ms de délai pour laisser Supabase stabiliser la session)
-  setTimeout(() => {
-    console.log("[SYNC] background sync started");
-    syncStudentFromSupabase(user).catch(e => {
+  // Restauration du profil en arrière-plan, exposée pour que startQuiz puisse l'attendre.
+  window._authReadyPromise = new Promise(resolve => setTimeout(resolve, 300))
+    .then(() => {
+      console.log("[SYNC] background sync started");
+      return syncStudentFromSupabase(user);
+    })
+    .catch(e => {
       console.error("[auth] ❌ Erreur restauration profil (background):", e);
+    })
+    .finally(() => {
+      console.log("[SYNC] background sync finished");
     });
-  }, 300);
 }
 
 function _authShowOverlay() {
   _currentAuthUserId = null;
+  window._currentAuthUserId = null;
   document.body.classList.add("auth-visible");
   document.getElementById("auth-overlay").style.display = "flex";
   document.getElementById("auth-user-bar").classList.remove("visible");
