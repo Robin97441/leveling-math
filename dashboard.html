@@ -302,7 +302,7 @@
 
 <div class="recalibrate-section">
   <strong style="color: #fca5a5;">🔧 Recalibrage XP (données historiques)</strong>
-  <p style="font-size: 13px; color: #94a3b8; margin: 6px 0 12px;">Recalcule <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">series_results.xp_gained</code> et <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.xp_total</code> à partir de <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">question_results.xp_delta</code> pour tous les élèves.</p>
+  <p style="font-size: 13px; color: #94a3b8; margin: 6px 0 12px;">Recalcule <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">series_results.xp_gained</code> et <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.xp_total</code> à partir de <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">question_results.xp_delta</code> + <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.manual_xp_bonus</code>.</p>
   <button id="recalibrateBtn" onclick="recalibrateXP()" style="background:linear-gradient(135deg,#ef4444,#dc2626);color:white;border:1px solid rgba(239,68,68,.4);padding:9px 20px;border-radius:12px;font-weight:700;cursor:pointer;font-size:13px;box-shadow:0 0 14px rgba(239,68,68,.2);transition:box-shadow .2s,transform .12s;">Recalibrer XP</button>
   <pre id="recalibrateLog" style="margin-top: 12px; font-size: 12px; color: #94a3b8; white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></pre>
 </div>
@@ -616,10 +616,10 @@
       // ── ÉTAPE 3 : recalibrer students.xp_total ──────────────────────────
       addLog("\n━━━ ÉTAPE 3 : students.xp_total ━━━");
       const { data: studentsBefore, error: stErr } = await supabaseClient
-        .from("students").select("id, pseudo, session, xp_total");
+        .from("students").select("*");
       if (stErr) throw stErr;
       addLog(`   ${studentsBefore.length} élèves chargés`);
-      addLog(`   Note : le tableau affiche Σ xp_delta (question_results), PAS xp_total.`);
+      addLog(`   Note : le tableau affiche Σ xp_delta (question_results) + bonus manuel.`);
       addLog(`   xp_total sert uniquement au tri et à la synchro inter-appareils.\n`);
 
       let studentsFixed = 0, studentsSkipped = 0;
@@ -628,24 +628,28 @@
       for (const student of studentsBefore) {
         const currentSession = student.session || 1;
         const sigmaXpDelta = xpByStudentSession[`${student.id}_${currentSession}`] ?? 0;
+        const manualBonus = Number(student.manual_xp_bonus) || 0;
+        const finalXpTotal = Math.max(0, sigmaXpDelta + manualBonus);
         const beforeXpTotal = student.xp_total;
         const displayPseudo = window.formatPseudo ? window.formatPseudo(student.pseudo) : student.pseudo;
 
-        if (sigmaXpDelta === beforeXpTotal) {
+        if (finalXpTotal === beforeXpTotal) {
           studentsSkipped++;
-          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, afterXpTotal: beforeXpTotal, status: "ok" });
+          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal: beforeXpTotal, displayed: finalXpTotal, status: "ok" });
           continue;
         }
 
         addLog(`   ${displayPseudo} S${currentSession}`);
         addLog(`     AVANT xp_total DB : ${beforeXpTotal}`);
         addLog(`     Σ xp_delta        : ${sigmaXpDelta}`);
+        addLog(`     bonus manuel      : ${manualBonus}`);
+        addLog(`     total final       : ${finalXpTotal}`);
 
         const { error: uErr } = await supabaseClient
-          .from("students").update({ xp_total: sigmaXpDelta }).eq("id", student.id);
+          .from("students").update({ xp_total: finalXpTotal }).eq("id", student.id);
         if (uErr) {
           addLog(`     ⚠️ Erreur écriture: ${uErr.message}`);
-          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, afterXpTotal: null, status: "error" });
+          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal: null, displayed: finalXpTotal, status: "error" });
           continue;
         }
 
@@ -653,12 +657,12 @@
         const { data: checkStudent } = await supabaseClient
           .from("students").select("xp_total").eq("id", student.id).single();
         const afterXpTotal = checkStudent?.xp_total;
-        const match = afterXpTotal === sigmaXpDelta;
-        addLog(`     ÉCRIT             : ${sigmaXpDelta}`);
+        const match = afterXpTotal === finalXpTotal;
+        addLog(`     ÉCRIT             : ${finalXpTotal}`);
         addLog(`     LU APRÈS ÉCRITURE : ${afterXpTotal}  ${match ? "✓" : "⚠️ DIVERGENCE"}`);
-        addLog(`     AFFICHÉ TABLEAU   : ${sigmaXpDelta} (= Σ xp_delta, source fixe)`);
+        addLog(`     AFFICHÉ TABLEAU   : ${finalXpTotal} (= Σ xp_delta + bonus manuel)`);
 
-        studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, afterXpTotal, status: match ? "fixed" : "divergence" });
+        studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal, displayed: finalXpTotal, status: match ? "fixed" : "divergence" });
         studentsFixed++;
       }
 
@@ -666,16 +670,17 @@
 
       // ── RAPPORT FINAL ────────────────────────────────────────────────────
       addLog("\n━━━ RAPPORT FINAL ━━━");
-      addLog("Pseudo         | Session | xp_total avant | Σ xp_delta | xp_total après | Affiché");
-      addLog("───────────────|─────────|────────────────|────────────|────────────────|────────");
+      addLog("Pseudo         | Session | xp_total avant | Σ xp_delta | bonus | xp_total après | Affiché");
+      addLog("───────────────|─────────|────────────────|────────────|───────|────────────────|────────");
       studentResults.forEach(r => {
         const line = [
           r.pseudo.padEnd(14),
           ("S" + r.session).padEnd(7),
           String(r.beforeXpTotal ?? "?").padEnd(14),
           String(r.sigmaXpDelta).padEnd(10),
+          String(r.manualBonus ?? 0).padEnd(5),
           String(r.afterXpTotal ?? "err").padEnd(14),
-          String(r.sigmaXpDelta) + (r.status === "ok" ? " (inchangé)" : r.status === "fixed" ? " ✅" : " ⚠️")
+          String(r.displayed ?? r.sigmaXpDelta) + (r.status === "ok" ? " (inchangé)" : r.status === "fixed" ? " ✅" : " ⚠️")
         ].join(" | ");
         addLog(line);
       });
@@ -683,7 +688,7 @@
       // ── RECHARGEMENT DU TABLEAU ──────────────────────────────────────────
       addLog("\n⏳ Rechargement du tableau…");
       await loadStudents();
-      addLog("✅ Tableau rechargé. Les XP affichés = Σ xp_delta (source de vérité).");
+      addLog("✅ Tableau rechargé. Les XP affichés = Σ xp_delta + bonus manuel.");
       addLog("   Si les valeurs n'ont pas changé, c'est que le tableau était déjà correct.");
       btn.textContent = "✅ Terminé — tableau rechargé";
     } catch(e) {
@@ -727,6 +732,10 @@
       total = Math.max(0, total + seriesXP);
     }
     return total;
+  }
+
+  function getManualXpBonus(student) {
+    return Number(student?.manual_xp_bonus) || 0;
   }
 
   // ── Pagination universelle question_results ──────────────────────────────
@@ -838,7 +847,7 @@
       const studentSeries = (seriesData || []).filter(
         r => r.student_id === student.id && r.session === currentSession
       );
-      flooredXpMap[key] = computeFlooredXP(studentSeries, xpBySeriesId);
+      flooredXpMap[key] = computeFlooredXP(studentSeries, xpBySeriesId) + getManualXpBonus(student);
     });
 
     // Tri par XP floored décroissant
@@ -904,7 +913,7 @@
       { data: studentRow, error: studentErr },
       { data: rawSeriesData, error }
     ] = await Promise.all([
-      supabaseClient.from("students").select("session").eq("id", studentId).single(),
+      supabaseClient.from("students").select("*").eq("id", studentId).single(),
       supabaseClient.from("series_results").select("*").eq("student_id", studentId).eq("session", session).order("created_at", { ascending: false })
     ]);
 
@@ -976,12 +985,13 @@
 
     // sessionXP avec plancher à 0 après chaque série (running floor, même règle que le tableau principal)
     // data est trié descending (plus récent en premier) → reverse() pour ordre chrono
-    const sessionXP = computeFlooredXP([...data].reverse(), xpBySeriesId);
+    const manualBonus = getManualXpBonus(studentRow);
+    const sessionXP = computeFlooredXP([...data].reverse(), xpBySeriesId) + manualBonus;
 
     // XP cumulé par série : calculé en ordre chrono, stocké par series.id pour affichage en DESC
     // Plancher 0 après chaque série (même règle que sessionXP)
     const xpCumulById = {};
-    let _runningXp = 0;
+    let _runningXp = manualBonus;
     [...data].reverse().forEach(s => {
       _runningXp = Math.max(0, _runningXp + (xpBySeriesId[s.id] ?? 0));
       xpCumulById[s.id] = _runningXp;
@@ -1018,7 +1028,9 @@
 
     // Titre
     const title = document.createElement("h2");
-    title.textContent = `Historique de ${pseudo} — Session ${session || 1}`;
+    title.textContent = manualBonus
+      ? `Historique de ${pseudo} — Session ${session || 1} (+${manualBonus} XP bonus manuel)`
+      : `Historique de ${pseudo} — Session ${session || 1}`;
     historyDiv.appendChild(title);
 
     // Sélecteur de sessions
@@ -1156,7 +1168,7 @@
 
         if (newCurrent == null) {
           await supabaseClient.from("students").update({
-            session: 1, xp_total: 0, best_score: 0, best_avg_time: null, games_played: 0,
+            session: 1, xp_total: Math.max(0, manualBonus), best_score: 0, best_avg_time: null, games_played: 0,
             updated_at: new Date().toISOString()
           }).eq("id", studentId);
         } else {
@@ -1174,7 +1186,7 @@
           const bestAvgTime = validTimes.length ? Math.min(...validTimes) : null;
           await supabaseClient.from("students").update({
             session: newCurrent,
-            xp_total: Math.max(0, sumXp),
+            xp_total: Math.max(0, sumXp + manualBonus),
             best_score: bestScore,
             best_avg_time: bestAvgTime,
             games_played: arr.length,
@@ -1964,17 +1976,19 @@
       const validTimes = seriesArr.map(r => r.avg_time).filter(t => t != null);
       const bestAvgTime = validTimes.length ? Math.min(...validTimes) : null;
       const gamesPlayed = seriesArr.length;
+      const mergedManualBonus = getManualXpBonus(tgtStu) + getManualXpBonus(srcStu);
 
       const { error: updErr } = await supabaseClient.from("students").update({
         session: newCurrentSession,
-        xp_total: Math.max(0, sumXp),
+        manual_xp_bonus: mergedManualBonus,
+        xp_total: Math.max(0, sumXp + mergedManualBonus),
         best_score: bestScore,
         best_avg_time: bestAvgTime,
         games_played: gamesPlayed,
         updated_at: new Date().toISOString()
       }).eq("id", tgtStu.id);
       if (updErr) throw new Error("Update cible: " + updErr.message);
-      addLog(`✅ Cible recalculée — session=${newCurrentSession}, xp_total=${Math.max(0, sumXp)}, best_score=${bestScore}, best_avg_time=${bestAvgTime ?? "—"}, games_played=${gamesPlayed}`);
+      addLog(`✅ Cible recalculée — session=${newCurrentSession}, xp_total=${Math.max(0, sumXp + mergedManualBonus)}, bonus manuel=${mergedManualBonus}, best_score=${bestScore}, best_avg_time=${bestAvgTime ?? "—"}, games_played=${gamesPlayed}`);
 
       // 8. Supprimer le pseudo source
       const { error: delErr } = await supabaseClient.from("students").delete().eq("id", srcStu.id);
