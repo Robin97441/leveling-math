@@ -1,0 +1,2004 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard Prof</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+  <script src="js/config/ranks.js"></script>
+  <script src="js/config/categories.js"></script>
+  <script src="js/supabase/client.js"></script>
+  <script>const supabaseClient = _qClient;</script>
+
+  <style>
+    :root {
+      --bg1: #071225; --bg2: #0d1e3c;
+      --text: #f8fafc; --muted: #cbd5e1; --radius: 20px;
+      --card-bg: rgba(10,20,50,.45);
+      --card-border: rgba(96,165,250,.18);
+      --card-shadow: 0 0 28px rgba(96,165,250,.08), 0 2px 40px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.07);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { height: 100%; background: var(--bg1); }
+    body {
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(ellipse 38% 55% at 92% 42%, rgba(167,139,250,.07) 0%, transparent 70%),
+        radial-gradient(ellipse 28% 35% at 88% 18%, rgba(96,165,250,.09) 0%, transparent 65%),
+        linear-gradient(135deg, var(--bg1), var(--bg2));
+      padding: 24px 14px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .dash-wrap {
+      width: min(1100px, 100%);
+      margin: 0 auto;
+      display: none;
+    }
+    body.admin-ready .dash-wrap { display: block; }
+
+    /* ── Accès admin ──────────────────────────────────────────────────── */
+    .admin-gate {
+      width: min(440px, 100%);
+      margin: auto;
+      background: var(--card-bg);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      box-shadow: var(--card-shadow);
+      padding: 22px;
+    }
+    body.admin-ready .admin-gate { display: none; }
+    .admin-gate h1 {
+      margin-bottom: 10px;
+      font-size: clamp(24px, 6vw, 34px);
+    }
+    .admin-gate p {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+    .admin-field {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+      color: #bfdbfe;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .admin-field input {
+      width: 100%;
+      border: 1px solid rgba(96,165,250,.22);
+      border-radius: 12px;
+      background: #f8fafc;
+      color: #0f172a;
+      padding: 12px 13px;
+      font-size: 15px;
+      font-weight: 700;
+      outline: none;
+    }
+    .admin-field input:focus {
+      border-color: rgba(96,165,250,.55);
+      box-shadow: 0 0 0 3px rgba(96,165,250,.14);
+    }
+    .admin-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+      margin-top: 16px;
+    }
+    .admin-btn {
+      background: linear-gradient(135deg,#3b82f6,#2563eb);
+      color: white;
+      border: 1px solid rgba(59,130,246,.4);
+      padding: 10px 20px;
+      border-radius: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      font-size: 14px;
+      box-shadow: 0 0 14px rgba(59,130,246,.25);
+    }
+    .admin-btn.secondary {
+      background: rgba(10,20,50,.45);
+      border-color: rgba(96,165,250,.18);
+      box-shadow: none;
+    }
+    .admin-btn:disabled { opacity: .6; cursor: not-allowed; }
+    .admin-message {
+      min-height: 20px;
+      margin-top: 12px;
+      color: #fca5a5;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .admin-session-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    /* ── Titre ─────────────────────────────────────────────────── */
+    h1 {
+      text-align: center;
+      font-size: clamp(24px, 5vw, 40px);
+      font-weight: 900; letter-spacing: -1px;
+      margin-bottom: 24px;
+    }
+    h1 span { color: #93c5fd; text-shadow: 0 0 18px rgba(96,165,250,.55), 0 0 40px rgba(96,165,250,.25); }
+
+    h2 { font-size: 20px; font-weight: 900; margin-bottom: 14px; }
+    h3 { font-size: 15px; font-weight: 700; margin: 0; }
+
+    /* ── Tableaux ──────────────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card-bg);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--card-shadow);
+    }
+    th, td { padding: 12px 14px; text-align: center; }
+    th {
+      background: rgba(5,12,40,.60);
+      font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+      color: #93c5fd; font-weight: 700;
+    }
+    tr { transition: background .15s; }
+    tr:nth-child(even) { background: rgba(5,12,40,.25); }
+    tr:hover { background: rgba(96,165,250,.08); cursor: pointer; }
+
+    /* ── Historique ─────────────────────────────────────────────── */
+    #history { margin-top: 24px; }
+    #history h2 { margin-bottom: 14px; }
+    #history table th { background: rgba(5,12,40,.60); color: #93c5fd; }
+    #history table tr:nth-child(even) { background: rgba(5,12,40,.25); }
+    #history table tr:hover { background: rgba(96,165,250,.08); }
+
+    /* ── Vue détail série ─────────────────────────────────────── */
+    .detail-back-btn {
+      background: var(--card-bg); color: #93c5fd;
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      padding: 8px 18px; border-radius: 12px; cursor: pointer;
+      font-size: 13px; font-weight: 700; margin-bottom: 20px; display: inline-block;
+      transition: box-shadow .2s, border-color .2s;
+    }
+    .detail-back-btn:hover {
+      border-color: rgba(96,165,250,.35);
+      box-shadow: 0 0 14px rgba(96,165,250,.2);
+    }
+
+    .detail-header { margin-bottom: 24px; }
+    .detail-header-title {
+      display: flex; align-items: center; gap: 12px;
+      flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .detail-level-badge {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white; font-size: 12px; font-weight: 700;
+      padding: 4px 12px; border-radius: 999px; text-transform: uppercase;
+      letter-spacing: .04em;
+      box-shadow: 0 0 12px rgba(59,130,246,.3);
+    }
+    .detail-student { font-size: 18px; font-weight: 800; }
+    .detail-date { color: var(--muted); font-size: 13px; }
+
+    .detail-stats-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .detail-stat-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border: 1px solid var(--card-border);
+      border-radius: 16px; padding: 14px 18px; min-width: 110px;
+      box-shadow: 0 0 12px rgba(96,165,250,.05), inset 0 1px 0 rgba(255,255,255,.05);
+    }
+    .detail-stat-card--wide { min-width: 200px; }
+    .detail-stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+    .detail-stat-value { font-size: 22px; font-weight: 900; }
+    .detail-stat-value--small { font-size: 14px; font-weight: 700; line-height: 1.3; }
+
+    .detail-table-wrap { overflow-x: auto; margin-top: 16px; }
+    .detail-table {
+      width: 100%; border-collapse: collapse;
+      background: var(--card-bg);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius); overflow: hidden;
+      font-size: 14px; box-shadow: var(--card-shadow);
+    }
+    .detail-table thead th {
+      background: rgba(5,12,40,.60); padding: 11px 14px; text-align: left;
+      font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+      color: #93c5fd; white-space: nowrap;
+    }
+    .detail-table td { padding: 10px 14px; border-bottom: 1px solid rgba(96,165,250,.06); vertical-align: middle; }
+    .detail-row--correct { background: rgba(34,197,94,.06); }
+    .detail-row--wrong   { background: rgba(239,68,68,.06); }
+    .detail-row--equiv   { background: rgba(251,191,36,.06); }
+    .detail-table tbody tr:hover { background: rgba(96,165,250,.08); }
+
+    .detail-idx { color: #64748b; font-size: 12px; width: 32px; text-align: center; }
+    .detail-question { font-weight: 700; font-size: 15px; white-space: nowrap; }
+    .detail-user-ans { font-weight: 700; }
+    .detail-expected { color: var(--muted); }
+    .detail-time { white-space: nowrap; }
+    .ans--correct { color: #22c55e; }
+    .ans--wrong   { color: #ef4444; }
+    .ans--equiv   { color: #fbbf24; }
+
+    .badge {
+      display: inline-block; padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; white-space: nowrap;
+    }
+    .badge--correct { background: rgba(34,197,94,.15); color: #22c55e; }
+    .badge--wrong   { background: rgba(239,68,68,.15);  color: #ef4444; }
+    .badge--equiv   { background: rgba(251,191,36,.15); color: #fbbf24; }
+
+    .subcat-tag {
+      display: inline-block;
+      background: rgba(96,165,250,.10); color: #93c5fd;
+      font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+      border: 1px solid rgba(96,165,250,.15);
+    }
+
+    /* ── Recalibrage ───────────────────────────────────────────── */
+    .recalibrate-section {
+      margin-top: 32px; padding: 18px 20px;
+      background: rgba(239,68,68,.06);
+      border: 1px solid rgba(239,68,68,.20);
+      border-radius: var(--radius);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    }
+
+    /* ── Mobile ────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      body { padding: 16px 10px; }
+      th, td { padding: 10px 8px; font-size: 13px; }
+      .detail-stats-row { gap: 8px; }
+      .detail-stat-card { min-width: 90px; padding: 10px 12px; }
+    }
+  </style>
+</head>
+
+<body>
+<div id="adminGate" class="admin-gate" aria-live="polite"></div>
+
+<div class="dash-wrap">
+
+<div class="admin-session-bar">
+  <span id="adminUserLabel"></span>
+  <button class="admin-btn secondary" type="button" onclick="adminSignOut()">Se déconnecter</button>
+</div>
+
+<h1>📊 Dashboard <span>élèves</span></h1>
+
+<table id="table">
+  <thead>
+    <tr>
+      <th>Pseudo</th>
+      <th>XP</th>
+      <th>Best Score</th>
+      <th>Best Time</th>
+      <th>Parties</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<div id="history"></div>
+
+<div class="recalibrate-section">
+  <strong style="color: #fca5a5;">🔧 Recalibrage XP (données historiques)</strong>
+  <p style="font-size: 13px; color: #94a3b8; margin: 6px 0 12px;">Recalcule <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">series_results.xp_gained</code> et <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.xp_total</code> à partir de <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">question_results.xp_delta</code> pour tous les élèves.</p>
+  <button id="recalibrateBtn" onclick="recalibrateXP()" style="background:linear-gradient(135deg,#ef4444,#dc2626);color:white;border:1px solid rgba(239,68,68,.4);padding:9px 20px;border-radius:12px;font-weight:700;cursor:pointer;font-size:13px;box-shadow:0 0 14px rgba(239,68,68,.2);transition:box-shadow .2s,transform .12s;">Recalibrer XP</button>
+  <pre id="recalibrateLog" style="margin-top: 12px; font-size: 12px; color: #94a3b8; white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></pre>
+</div>
+
+<div class="recalibrate-section" style="background:rgba(96,165,250,.06);border-color:rgba(96,165,250,.22)">
+  <strong style="color:#93c5fd;">🔀 Fusionner deux pseudos</strong>
+  <p style="font-size:13px;color:#94a3b8;margin:6px 0 12px;">Déplace toutes les sessions du <em>pseudo source</em> vers le <em>pseudo cible</em> et les renumérote à la suite. Utile pour réconcilier des doublons de casse (<code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd">Tom</code> → <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd">tom</code>).</p>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+    <label style="font-size:12px;color:#94a3b8">Source
+      <select id="mergeSrc" style="margin-left:6px;background:#0f172a;color:white;border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:6px 10px;font-size:13px"></select>
+    </label>
+    <span style="color:#64748b">→</span>
+    <label style="font-size:12px;color:#94a3b8">Cible
+      <select id="mergeTgt" style="margin-left:6px;background:#0f172a;color:white;border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:6px 10px;font-size:13px"></select>
+    </label>
+    <button id="mergeBtn" onclick="mergePseudos()" style="background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;border:1px solid rgba(59,130,246,.4);padding:9px 20px;border-radius:12px;font-weight:700;cursor:pointer;font-size:13px;box-shadow:0 0 14px rgba(59,130,246,.25)">Fusionner</button>
+  </div>
+  <pre id="mergeLog" style="margin-top:6px;font-size:12px;color:#94a3b8;white-space:pre-wrap;max-height:240px;overflow-y:auto"></pre>
+</div>
+
+</div><!-- .dash-wrap -->
+
+<script>
+  // supabaseClient défini via js/supabase/client.js + alias en bas de page
+  // Remplis au moins l'un des deux tableaux avec ton compte Supabase Auth admin.
+  // Recommandé : ADMIN_USER_IDS (stable même si l'email change).
+  const ADMIN_USER_IDS = [
+    // "00000000-0000-0000-0000-000000000000"
+  ];
+  const ADMIN_EMAILS = [
+    // "ton-email-admin@example.com"
+  ];
+
+  let currentAdminUser = null;
+  let dashboardBootstrapped = false;
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    })[char]);
+  }
+
+  async function isAdminUser(user) {
+    if (!user) return false;
+    const email = String(user.email || "").toLowerCase();
+    const normalizedAdminEmails = ADMIN_EMAILS.map(e => String(e).toLowerCase());
+    const isLocalAdmin = ADMIN_USER_IDS.includes(user.id)
+      || normalizedAdminEmails.includes(email)
+      || user.app_metadata?.role === "admin"
+      || user.app_metadata?.is_admin === true;
+    if (isLocalAdmin) return true;
+
+    try {
+      const { data, error } = await supabaseClient
+        .from("admin_users")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (error) {
+        console.warn("[dashboard][admin] vérification admin_users impossible:", error.message);
+        return false;
+      }
+      return !!data;
+    } catch (e) {
+      console.warn("[dashboard][admin] table admin_users absente ou inaccessible:", e?.message || e);
+      return false;
+    }
+  }
+
+  function showAdminLogin(message = "") {
+    console.log("[dashboard][admin] affichage login admin", message ? { message } : "");
+    currentAdminUser = null;
+    dashboardBootstrapped = false;
+    document.body.classList.remove("admin-ready");
+    const gate = document.getElementById("adminGate");
+    if (!gate) return;
+    gate.innerHTML = `
+      <h1>Accès admin</h1>
+      <p>Connecte-toi avec ton compte Supabase Auth administrateur pour ouvrir le dashboard.</p>
+      <label class="admin-field">Email
+        <input id="adminEmail" type="email" autocomplete="email" placeholder="admin@example.com">
+      </label>
+      <label class="admin-field">Mot de passe
+        <input id="adminPassword" type="password" autocomplete="current-password" placeholder="Mot de passe">
+      </label>
+      <div class="admin-actions">
+        <button id="adminLoginBtn" class="admin-btn" type="button" onclick="adminLogin()">Se connecter</button>
+      </div>
+      <div id="adminMessage" class="admin-message">${escapeHtml(message)}</div>
+    `;
+    ["adminEmail", "adminPassword"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("keydown", e => { if (e.key === "Enter") adminLogin(); });
+    });
+  }
+
+  function showAdminBlocked(user) {
+    console.warn("[dashboard][admin] accès refusé", user ? { id: user.id, email: user.email } : null);
+    currentAdminUser = null;
+    dashboardBootstrapped = false;
+    document.body.classList.remove("admin-ready");
+    const gate = document.getElementById("adminGate");
+    if (!gate) return;
+    gate.innerHTML = `
+      <h1>Accès refusé</h1>
+      <p>Compte connecté : <strong>${escapeHtml(user?.email || "inconnu")}</strong></p>
+      <p>Ce compte Supabase Auth n'est pas déclaré administrateur.</p>
+      <div class="admin-actions">
+        <button class="admin-btn secondary" type="button" onclick="adminSignOut()">Changer de compte</button>
+      </div>
+    `;
+  }
+
+  async function showDashboard(user) {
+    currentAdminUser = user;
+    document.body.classList.add("admin-ready");
+    const label = document.getElementById("adminUserLabel");
+    if (label) label.textContent = `Connecté admin : ${user.email || user.id}`;
+    console.log("[dashboard][admin] accès admin accordé", { id: user.id, email: user.email });
+
+    if (dashboardBootstrapped) return;
+    dashboardBootstrapped = true;
+    try {
+      await loadStudents();
+      await populateMergeSelects();
+    } catch (e) {
+      console.error("[dashboard][admin] erreur chargement dashboard:", e);
+      dashboardBootstrapped = false;
+      alert("Erreur Supabase lors du chargement du dashboard. Voir la console.");
+    }
+  }
+
+  async function requireAdminAccess() {
+    console.log("[dashboard][admin] vérification session Supabase Auth");
+    try {
+      const { data, error } = await supabaseClient.auth.getUser();
+      if (error) {
+        console.error("[dashboard][admin] auth.getUser error:", error);
+        showAdminLogin("Session introuvable. Connecte-toi.");
+        return false;
+      }
+
+      const user = data?.user || null;
+      console.log("[dashboard][admin] utilisateur connecté", user ? { id: user.id, email: user.email } : null);
+      if (!user) {
+        showAdminLogin();
+        return false;
+      }
+      if (!(await isAdminUser(user))) {
+        showAdminBlocked(user);
+        return false;
+      }
+      await showDashboard(user);
+      return true;
+    } catch (e) {
+      console.error("[dashboard][admin] erreur Supabase auth:", e);
+      showAdminLogin("Erreur Supabase Auth. Voir la console.");
+      return false;
+    }
+  }
+
+  async function adminLogin() {
+    const email = (document.getElementById("adminEmail")?.value || "").trim();
+    const password = document.getElementById("adminPassword")?.value || "";
+    const btn = document.getElementById("adminLoginBtn");
+    const msg = document.getElementById("adminMessage");
+    if (msg) msg.textContent = "";
+    if (!email || !password) {
+      if (msg) msg.textContent = "Email et mot de passe requis.";
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = "Connexion..."; }
+    try {
+      console.log("[dashboard][admin] tentative login", { email });
+      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      const user = data?.user || null;
+      console.log("[dashboard][admin] login Supabase OK", user ? { id: user.id, email: user.email } : null);
+      if (!(await isAdminUser(user))) {
+        await supabaseClient.auth.signOut();
+        showAdminBlocked(user);
+        return;
+      }
+      await showDashboard(user);
+    } catch (e) {
+      console.error("[dashboard][admin] login error:", e);
+      if (msg) msg.textContent = e.message || "Connexion impossible.";
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Se connecter"; }
+    }
+  }
+
+  async function adminSignOut() {
+    console.log("[dashboard][admin] déconnexion");
+    const { error } = await supabaseClient.auth.signOut();
+    if (error) console.error("[dashboard][admin] signOut error:", error);
+    showAdminLogin();
+  }
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    console.log("[dashboard][admin] onAuthStateChange", event, session?.user ? { id: session.user.id, email: session.user.email } : null);
+    if (event === "SIGNED_OUT") showAdminLogin();
+    if (event === "SIGNED_IN") requireAdminAccess();
+  });
+
+  // ── État global : élève sélectionné ───────────────────────────────────────
+  // currentStudentId = UUID technique (jamais le pseudo).
+  // IMPORTANT : aucun autre état (session, level, période) n'est gardé en global.
+  // Tout filtre est recalculé à partir de l'élève + session passés en paramètre.
+  let currentStudentId = null;
+  let currentStudentPseudo = null;
+  let currentStudentSession = null;
+
+  const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  async function loadStudentData(studentId, pseudo, session) {
+    console.log("[dashboard] ───── selected student ─────");
+    if (!studentId || !_UUID_RE.test(String(studentId))) {
+      console.error("[dashboard] loadStudentData — studentId invalide (attendu UUID) :", studentId);
+      return;
+    }
+    // Reset complet de l'état global avant chargement (pas de fuite entre élèves)
+    currentStudentId = studentId;
+    currentStudentPseudo = pseudo;
+    currentStudentSession = session ?? null;
+    console.log("[dashboard] selected student =", { id: studentId, pseudo, session });
+    console.log("[dashboard] currentStudentId    =", currentStudentId);
+    console.log("[dashboard] currentStudentPseudo=", currentStudentPseudo);
+    console.log("[dashboard] currentStudentSession=", currentStudentSession);
+
+    // Feedback UI immédiat (évite l'impression de "rien ne change")
+    const historyDiv = document.getElementById("history");
+    if (historyDiv) {
+      historyDiv.innerHTML = `<p style="color:#94a3b8;padding:12px">⏳ Chargement de ${pseudo}…</p>`;
+    }
+
+    try {
+      await loadHistory(studentId, pseudo, session);
+      console.log("[dashboard] renderSeriesHistory done (loadHistory returned without throw)");
+    } catch (e) {
+      console.error("[dashboard] render failed — loadHistory threw:", e);
+      console.error("[dashboard] stack:", e && e.stack);
+      if (historyDiv) {
+        historyDiv.innerHTML = `<p style="color:#ef4444;padding:12px">Erreur de rendu : ${String(e && e.message || e)}<br><small style="color:#94a3b8">Voir la console pour le détail.</small></p>`;
+      }
+    }
+  }
+
+  // ── Recalibrage XP historique ─────────────────────────────────────────────
+  async function recalibrateXP() {
+    const btn = document.getElementById("recalibrateBtn");
+    const log = document.getElementById("recalibrateLog");
+    btn.disabled = true;
+    btn.textContent = "⏳ En cours…";
+    log.textContent = "";
+
+    const addLog = (msg) => {
+      log.textContent += msg + "\n";
+      log.scrollTop = log.scrollHeight;
+    };
+
+    try {
+      // ── ÉTAPE 1 : charger question_results (source de vérité) ───────────
+      addLog("━━━ ÉTAPE 1 : question_results ━━━");
+      const qRows = await fetchAllQR(() =>
+        supabaseClient.from("question_results")
+          .select("student_id, series_id, session, xp_delta")
+      );
+      console.log("TOTAL recalibrage :", qRows.length);  // doit être > 1000
+      const nullDelta = qRows.filter(q => q.xp_delta == null).length;
+      addLog(`   ${qRows.length} lignes chargées  |  xp_delta null: ${nullDelta}`);
+
+      // Agréger par series_id et par (student_id, session)
+      const xpBySeries = {};
+      const xpByStudentSession = {};
+      qRows.forEach(q => {
+        if (q.series_id != null)
+          xpBySeries[q.series_id] = (xpBySeries[q.series_id] || 0) + (Number(q.xp_delta) || 0);
+        const sk = `${q.student_id}_${q.session}`;
+        xpByStudentSession[sk] = (xpByStudentSession[sk] || 0) + (Number(q.xp_delta) || 0);
+      });
+
+      // ── ÉTAPE 2 : recalibrer series_results.xp_gained ───────────────────
+      addLog("\n━━━ ÉTAPE 2 : series_results.xp_gained ━━━");
+      const { data: seriesRows, error: sErr } = await supabaseClient
+        .from("series_results")
+        .select("id, xp_gained, student_id, session");
+      if (sErr) throw sErr;
+      addLog(`   ${seriesRows.length} séries chargées`);
+
+      let seriesFixed = 0, seriesSkipped = 0;
+      for (const series of seriesRows) {
+        const correctXp = xpBySeries[series.id] ?? 0;
+        if (correctXp === series.xp_gained) { seriesSkipped++; continue; }
+        addLog(`   Série ${series.id} — AVANT: ${series.xp_gained}  CALCULÉ: ${correctXp}`);
+        const { error: uErr } = await supabaseClient
+          .from("series_results").update({ xp_gained: correctXp }).eq("id", series.id);
+        if (uErr) { addLog(`   ⚠️ Erreur écriture série ${series.id}: ${uErr.message}`); continue; }
+        // Lecture de contrôle
+        const { data: check } = await supabaseClient
+          .from("series_results").select("xp_gained").eq("id", series.id).single();
+        addLog(`   ✅ Écrit: ${correctXp}  LU EN BASE: ${check?.xp_gained}  ${check?.xp_gained === correctXp ? "✓" : "⚠️ DIVERGENCE"}`);
+        seriesFixed++;
+      }
+      addLog(`   Corrigées: ${seriesFixed}  |  Déjà correctes: ${seriesSkipped}`);
+
+      // ── ÉTAPE 3 : recalibrer students.xp_total ──────────────────────────
+      addLog("\n━━━ ÉTAPE 3 : students.xp_total ━━━");
+      const { data: studentsBefore, error: stErr } = await supabaseClient
+        .from("students").select("id, pseudo, session, xp_total");
+      if (stErr) throw stErr;
+      addLog(`   ${studentsBefore.length} élèves chargés`);
+      addLog(`   Note : le tableau affiche Σ xp_delta (question_results), PAS xp_total.`);
+      addLog(`   xp_total sert uniquement au tri et à la synchro inter-appareils.\n`);
+
+      let studentsFixed = 0, studentsSkipped = 0;
+      const studentResults = []; // pour rapport final
+
+      for (const student of studentsBefore) {
+        const currentSession = student.session || 1;
+        const sigmaXpDelta = xpByStudentSession[`${student.id}_${currentSession}`] ?? 0;
+        const beforeXpTotal = student.xp_total;
+        const displayPseudo = window.formatPseudo ? window.formatPseudo(student.pseudo) : student.pseudo;
+
+        if (sigmaXpDelta === beforeXpTotal) {
+          studentsSkipped++;
+          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, afterXpTotal: beforeXpTotal, status: "ok" });
+          continue;
+        }
+
+        addLog(`   ${displayPseudo} S${currentSession}`);
+        addLog(`     AVANT xp_total DB : ${beforeXpTotal}`);
+        addLog(`     Σ xp_delta        : ${sigmaXpDelta}`);
+
+        const { error: uErr } = await supabaseClient
+          .from("students").update({ xp_total: sigmaXpDelta }).eq("id", student.id);
+        if (uErr) {
+          addLog(`     ⚠️ Erreur écriture: ${uErr.message}`);
+          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, afterXpTotal: null, status: "error" });
+          continue;
+        }
+
+        // Lecture de contrôle après écriture
+        const { data: checkStudent } = await supabaseClient
+          .from("students").select("xp_total").eq("id", student.id).single();
+        const afterXpTotal = checkStudent?.xp_total;
+        const match = afterXpTotal === sigmaXpDelta;
+        addLog(`     ÉCRIT             : ${sigmaXpDelta}`);
+        addLog(`     LU APRÈS ÉCRITURE : ${afterXpTotal}  ${match ? "✓" : "⚠️ DIVERGENCE"}`);
+        addLog(`     AFFICHÉ TABLEAU   : ${sigmaXpDelta} (= Σ xp_delta, source fixe)`);
+
+        studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, afterXpTotal, status: match ? "fixed" : "divergence" });
+        studentsFixed++;
+      }
+
+      addLog(`\n   Corrigés: ${studentsFixed}  |  Déjà corrects: ${studentsSkipped}`);
+
+      // ── RAPPORT FINAL ────────────────────────────────────────────────────
+      addLog("\n━━━ RAPPORT FINAL ━━━");
+      addLog("Pseudo         | Session | xp_total avant | Σ xp_delta | xp_total après | Affiché");
+      addLog("───────────────|─────────|────────────────|────────────|────────────────|────────");
+      studentResults.forEach(r => {
+        const line = [
+          r.pseudo.padEnd(14),
+          ("S" + r.session).padEnd(7),
+          String(r.beforeXpTotal ?? "?").padEnd(14),
+          String(r.sigmaXpDelta).padEnd(10),
+          String(r.afterXpTotal ?? "err").padEnd(14),
+          String(r.sigmaXpDelta) + (r.status === "ok" ? " (inchangé)" : r.status === "fixed" ? " ✅" : " ⚠️")
+        ].join(" | ");
+        addLog(line);
+      });
+
+      // ── RECHARGEMENT DU TABLEAU ──────────────────────────────────────────
+      addLog("\n⏳ Rechargement du tableau…");
+      await loadStudents();
+      addLog("✅ Tableau rechargé. Les XP affichés = Σ xp_delta (source de vérité).");
+      addLog("   Si les valeurs n'ont pas changé, c'est que le tableau était déjà correct.");
+      btn.textContent = "✅ Terminé — tableau rechargé";
+    } catch(e) {
+      addLog("❌ Erreur fatale : " + e.message);
+      console.error(e);
+      btn.textContent = "❌ Erreur";
+      btn.disabled = false;
+    }
+  }
+
+  // seconds : float ou string — vert < 5s, orange < 8s, rouge >= 8s
+  function getAverageTimeColor(seconds) {
+    const s = parseFloat(seconds);
+    if (isNaN(s)) return "#94a3b8";
+    if (s < 5) return "#22c55e";
+    if (s < 8) return "#f59e0b";
+    return "#ef4444";
+  }
+
+  // score : valeur brute /10 — vert >= 7, orange >= 5, rouge < 5
+  function getAverageScoreColor(score) {
+    const s = parseFloat(score);
+    if (isNaN(s)) return "#94a3b8";
+    if (s >= 7) return "#22c55e";
+    if (s >= 5) return "#f59e0b";
+    return "#ef4444";
+  }
+
+  // RANKS, getRankFromXP → js/config/ranks.js
+
+  // Calcule le XP total avec plancher à 0 appliqué après chaque série.
+  // seriesOrdered : tableau de séries trié par created_at ASCENDING (chronologique)
+  // xpBySeriesId  : { [seriesId]: number } — XP net réel de chaque série
+  //
+  // Règle : max(0, total + seriesXP) à chaque étape — pas juste max(0, Σ)
+  // Exemple : total=0, série=-50 → 0 ; série suivante +40 → 40 (et non 0)
+  function computeFlooredXP(seriesOrdered, xpBySeriesId) {
+    let total = 0;
+    for (const s of seriesOrdered) {
+      const seriesXP = xpBySeriesId[s.id] ?? 0;
+      total = Math.max(0, total + seriesXP);
+    }
+    return total;
+  }
+
+  // ── Pagination universelle question_results ──────────────────────────────
+  // Supabase tronque silencieusement les résultats à 1000 lignes par défaut.
+  // Ce helper itère par pages de 1000 jusqu'à épuisement des données.
+  // buildQuery : () => SupabaseQueryBuilder — appelé à chaque itération pour appliquer .range()
+  async function fetchAllQR(buildQuery) {
+    const BATCH = 1000;
+    let from = 0;
+    let all = [];
+    while (true) {
+      const { data, error } = await buildQuery().range(from, from + BATCH - 1);
+      if (error) throw error;
+      all = all.concat(data || []);
+      if ((data || []).length < BATCH) break;
+      from += BATCH;
+    }
+    console.log("TOTAL question_results chargés :", all.length);
+    return all;
+  }
+
+  // Retourne le Σ xp_delta d'une session depuis question_results (source de vérité).
+  async function getSessionRealXp(studentId, session) {
+    const rows = await fetchAllQR(() =>
+      supabaseClient.from("question_results")
+        .select("xp_delta")
+        .eq("student_id", studentId)
+        .eq("session", session)
+    );
+    return rows.reduce((sum, q) => sum + (Number(q.xp_delta) || 0), 0);
+  }
+
+  // Retourne le Σ xp_delta d'une série depuis question_results (source de vérité).
+  async function getSeriesRealXp(seriesId) {
+    const rows = await fetchAllQR(() =>
+      supabaseClient.from("question_results")
+        .select("xp_delta")
+        .eq("series_id", seriesId)
+    );
+    return rows.reduce((sum, q) => sum + (Number(q.xp_delta) || 0), 0);
+  }
+
+  async function loadStudents() {
+    console.log("[dashboard] loadStudents — BEGIN");
+
+    // ── Diagnostic auth : confirme qui est connecté côté JS ─────────────────
+    // Si auth.uid() est celui de Robin et qu'il y a une policy RLS
+    // "auth.uid() = auth_user_id" sur `students`, la requête ne renverra
+    // que la ligne de Robin — même si le table editor montre tout le monde.
+    try {
+      const { data: authData } = await supabaseClient.auth.getUser();
+      console.log("[dashboard] auth.user =",
+        authData?.user ? { id: authData.user.id, email: authData.user.email } : null);
+    } catch (e) { console.warn("[dashboard] auth.getUser failed:", e); }
+
+    // Requête brute sans filtre, avec count exact
+    console.log("[dashboard] students raw query = SELECT * FROM students (no filter, no limit)");
+    const { data: students, error, status, count } = await supabaseClient
+      .from("students")
+      .select("*", { count: "exact" });
+
+    console.log("[dashboard] students raw query HTTP status =", status);
+    console.log("[dashboard] students raw query returned", (students || []).length, "rows");
+    console.log("[dashboard] students count (exact, post-RLS) =", count);
+    console.log("[dashboard] students raw data =", students);
+    console.log("[dashboard] students after mapping =",
+      (students || []).map(s => ({ id: s.id, pseudo: s.pseudo, auth_user_id: s.auth_user_id, session: s.session })));
+
+    if (error) { console.error("[dashboard] students query error:", error); return; }
+    if (!students || students.length === 0) return;
+    if (students.length === 1) {
+      console.warn(
+        "[dashboard] ⚠️ Une seule ligne renvoyée. Probable policy RLS SELECT sur `students`\n" +
+        "           qui filtre par auth.uid() = auth_user_id.\n" +
+        "           Vérifier Supabase → Auth → Policies sur la table `students`."
+      );
+    }
+
+    const studentIds = students.map(s => s.id);
+
+    // Fetch parallèle : question_results (paginé) + series_results (pour ordre chrono)
+    const [qData, { data: seriesData, error: seriesError }] = await Promise.all([
+      fetchAllQR(() =>
+        supabaseClient.from("question_results")
+          .select("student_id, session, series_id, xp_delta")  // series_id nécessaire pour computeFlooredXP
+          .in("student_id", studentIds)
+      ),
+      supabaseClient.from("series_results")
+        .select("id, student_id, session, created_at")
+        .in("student_id", studentIds)
+        .order("created_at", { ascending: true })              // ordre chrono obligatoire pour le plancher
+    ]);
+
+    if (seriesError) console.error("Erreur series_results:", seriesError);
+
+    // XP net par série depuis question_results (source de vérité)
+    const xpBySeriesId = {};
+    qData.forEach(q => {
+      if (q.series_id != null)
+        xpBySeriesId[q.series_id] = (xpBySeriesId[q.series_id] || 0) + (Number(q.xp_delta) || 0);
+    });
+
+    // XP total avec plancher à 0 appliqué après chaque série (running floor)
+    // Remplace l'ancien xpMap basé sur Σ brut qui pouvait produire des valeurs négatives
+    const flooredXpMap = {};
+    students.forEach(student => {
+      const currentSession = student.session || 1;
+      const key = `${student.id}_${currentSession}`;
+      const studentSeries = (seriesData || []).filter(
+        r => r.student_id === student.id && r.session === currentSession
+      );
+      flooredXpMap[key] = computeFlooredXP(studentSeries, xpBySeriesId);
+    });
+
+    // Tri par XP floored décroissant
+    students.sort((a, b) => {
+      const xpA = flooredXpMap[`${a.id}_${a.session || 1}`] ?? 0;
+      const xpB = flooredXpMap[`${b.id}_${b.session || 1}`] ?? 0;
+      return xpB - xpA;
+    });
+
+    const tbody = document.querySelector("tbody");
+    tbody.innerHTML = "";
+
+    students.forEach(student => {
+      const currentSession = student.session || 1;
+      const xpNet = flooredXpMap[`${student.id}_${currentSession}`] ?? 0;  // plancher 0 garanti
+
+      const displayPseudo = window.formatPseudo ? window.formatPseudo(student.pseudo) : student.pseudo;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${displayPseudo} S${currentSession}</td>
+        <td>${xpNet}</td>
+        <td>${student.best_score || 0}</td>
+        <td>${student.best_avg_time ? student.best_avg_time.toFixed(2) : "-"}</td>
+        <td>${student.games_played || 0}</td>
+      `;
+      tr.addEventListener('click', () => loadStudentData(student.id, displayPseudo, currentSession));
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function loadHistory(studentId, pseudo, session) {
+    // Fonctions utilitaires
+    function translateLevel(level) {
+      const translations = {
+        "beginner": "Débutant",
+        "intermediate": "Intermédiaire",
+        "expert": "Expert"
+      };
+      return translations[level] || level;
+    }
+
+    // score : nombre de bonnes réponses, total : nombre de questions (défaut 10)
+    function getScoreColor(score, total = 10) {
+      if (score == null) return "";
+      const ratio = score / total;
+      if (ratio >= 0.9) return "#22c55e";   // 9-10/10 → vert
+      if (ratio >= 0.7) return "#f59e0b";   // 7-8/10 → jaune
+      return "#ef4444";                      // 0-6/10 → rouge
+    }
+
+    function getTimeColorByLevel(time, level) {
+      return "#94a3b8"; // temps : couleur neutre, pas de jugement visuel
+    }
+    // getRankFromXP est global — définie une seule fois au-dessus de loadStudents
+
+    // ── Requêtes Supabase avec traces complètes ──────────────────────────
+    const filterStudents   = { id: studentId };
+    const filterSeries     = { student_id: studentId, session };
+    console.log("[dashboard] students query  — filter =", filterStudents);
+    console.log("[dashboard] series_results query — filter =", filterSeries);
+
+    const [
+      { data: studentRow, error: studentErr },
+      { data: rawSeriesData, error }
+    ] = await Promise.all([
+      supabaseClient.from("students").select("session").eq("id", studentId).single(),
+      supabaseClient.from("series_results").select("*").eq("student_id", studentId).eq("session", session).order("created_at", { ascending: false })
+    ]);
+
+    if (studentErr) console.error("[dashboard] students query error:", studentErr);
+    else            console.log("[dashboard] students returned row =", studentRow);
+
+    if (error) {
+      console.error("[dashboard] series_results query error:", error);
+      throw new Error("series_results: " + error.message);
+    }
+    console.log("[dashboard] series_results returned", (rawSeriesData || []).length, "rows");
+    console.log("[dashboard] series_results first 3 =", (rawSeriesData || []).slice(0, 3));
+
+    // ── Fallback : si aucune ligne pour (student_id, session), vérifier s'il
+    // existe des données pour ce student avec une autre session. Cas typique :
+    // students.session n'est pas aligné avec les series_results réelles.
+    let data = rawSeriesData || [];
+    let effectiveSession = session;
+    if (data.length === 0) {
+      console.warn("[dashboard] 0 série pour session demandée — vérification sur toutes les sessions…");
+      const { data: allSess, error: allErr } = await supabaseClient
+        .from("series_results").select("session")
+        .eq("student_id", studentId);
+      if (allErr) console.error("[dashboard] fallback all-sessions error:", allErr);
+      const availSess = Array.from(new Set((allSess || []).map(r => r.session).filter(s => s != null))).sort((a,b)=>a-b);
+      console.log("[dashboard] sessions réellement présentes pour cet élève =", availSess);
+      if (availSess.length > 0) {
+        const fallback = availSess.includes(session) ? session : availSess[availSess.length - 1];
+        console.warn(`[dashboard] fallback → rechargement session ${fallback} pour student_id ${studentId}`);
+        const { data: fbData, error: fbErr } = await supabaseClient
+          .from("series_results").select("*")
+          .eq("student_id", studentId).eq("session", fallback)
+          .order("created_at", { ascending: false });
+        if (fbErr) { console.error("[dashboard] fallback query error:", fbErr); throw new Error("fallback: " + fbErr.message); }
+        data = fbData || [];
+        effectiveSession = fallback;
+        session = fallback; // aligner la variable locale pour tout le rendu
+        currentStudentSession = fallback;
+        console.log("[dashboard] fallback returned", data.length, "rows — session utilisée =", effectiveSession);
+      }
+    }
+
+    // question_results paginé — source de vérité XP + analyse par catégorie
+    const seriesIds = (data || []).map(s => s.id).filter(Boolean);
+    console.log("[dashboard] question_results query — filter = series_id IN", seriesIds.length, "ids");
+    const questionData = seriesIds.length > 0
+      ? await fetchAllQR(() =>
+          supabaseClient.from("question_results")
+            .select("xp_delta, series_id, category, subcategory, is_correct, response_time")
+            .in("series_id", seriesIds)
+        )
+      : [];
+    console.log("[dashboard] question_results returned", questionData.length, "rows");
+    console.log("[dashboard] question_results first 3 =", questionData.slice(0, 3));
+
+    // Passe 1 : XP, bonnes/fausses réponses par série depuis question_results (source de vérité)
+    const xpBySeriesId      = {};
+    const correctBySeries   = {};
+    const wrongBySeries     = {};
+    const seriesWithPenalty = new Set();
+    questionData.forEach(q => {
+      const delta = Number(q.xp_delta) || 0;
+      if (q.series_id == null) return;
+      xpBySeriesId[q.series_id] = (xpBySeriesId[q.series_id] || 0) + delta;
+      if (q.category === "refresh_penalty") { seriesWithPenalty.add(q.series_id); return; }
+      correctBySeries[q.series_id] = (correctBySeries[q.series_id] || 0) + (q.is_correct ? 1 : 0);
+      wrongBySeries[q.series_id]   = (wrongBySeries[q.series_id]   || 0) + (q.is_correct ? 0 : 1);
+    });
+
+    // sessionXP avec plancher à 0 après chaque série (running floor, même règle que le tableau principal)
+    // data est trié descending (plus récent en premier) → reverse() pour ordre chrono
+    const sessionXP = computeFlooredXP([...data].reverse(), xpBySeriesId);
+
+    // XP cumulé par série : calculé en ordre chrono, stocké par series.id pour affichage en DESC
+    // Plancher 0 après chaque série (même règle que sessionXP)
+    const xpCumulById = {};
+    let _runningXp = 0;
+    [...data].reverse().forEach(s => {
+      _runningXp = Math.max(0, _runningXp + (xpBySeriesId[s.id] ?? 0));
+      xpCumulById[s.id] = _runningXp;
+    });
+
+    // Rang calculé sur le total floored — cohérent avec le tableau principal
+    let rank = (typeof getRankFromXP === "function") ? getRankFromXP(sessionXP) : null;
+    if (!rank || typeof rank !== "object") {
+      console.warn("[dashboard] getRankFromXP a retourné", rank, "— fallback rank neutre appliqué");
+      rank = { color: "#64748b", icon: "•", label: "—", progress: "" };
+    }
+
+    // Sessions disponibles : de 1 jusqu'au numéro actuel (garantit les sessions vides)
+    const maxSession = (studentRow?.session) || session;
+    const availableSessions = Array.from({ length: maxSession }, (_, i) => i + 1);
+    const avgScore = data.length ? (data.reduce((sum, s) => sum + s.score, 0) / data.length).toFixed(2) : "-";
+    const avgTime = data.length ? (data.reduce((sum, s) => sum + (s.avg_time || 0), 0) / data.length).toFixed(2) : "-";
+
+    // Calcul des stats par niveau
+    const statsByLevel = {};
+    data.forEach(series => {
+      if (!statsByLevel[series.level]) {
+        statsByLevel[series.level] = { scores: [], times: [], count: 0 };
+      }
+      statsByLevel[series.level].scores.push(series.score);
+      statsByLevel[series.level].times.push(series.avg_time || 0);
+      statsByLevel[series.level].count++;
+    });
+
+    // Vider et reconstruire entièrement via createElement
+    console.log("[dashboard] renderSeriesHistory called — studentId =", studentId, "session =", session, "rows =", data.length);
+    const historyDiv = document.getElementById("history");
+    historyDiv.innerHTML = "";
+
+    // Titre
+    const title = document.createElement("h2");
+    title.textContent = `Historique de ${pseudo} — Session ${session || 1}`;
+    historyDiv.appendChild(title);
+
+    // Sélecteur de sessions
+    if (availableSessions.length > 1) {
+      const sessionNav = document.createElement("div");
+      sessionNav.style.cssText = "display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;";
+      availableSessions.forEach(s => {
+        const btn = document.createElement("button");
+        btn.textContent = `Session ${s}`;
+        btn.style.cssText = `
+          background: ${s === session ? "linear-gradient(135deg,#3b82f6,#2563eb)" : "rgba(10,20,50,.45)"};
+          color: white;
+          border: 1px solid ${s === session ? "rgba(59,130,246,.5)" : "rgba(96,165,250,.18)"};
+          padding: 7px 16px;
+          border-radius: 12px;
+          cursor: pointer;
+          font-size: 13px;
+          font-weight: 700;
+          backdrop-filter: blur(8px);
+          transition: box-shadow .2s, border-color .2s;
+          ${s === session ? "box-shadow: 0 0 14px rgba(59,130,246,.3);" : ""}
+        `;
+        btn.addEventListener("mouseenter", () => { if (s !== session) { btn.style.borderColor = "rgba(96,165,250,.35)"; btn.style.boxShadow = "0 0 12px rgba(96,165,250,.15)"; } });
+        btn.addEventListener("mouseleave", () => { if (s !== session) { btn.style.borderColor = "rgba(96,165,250,.18)"; btn.style.boxShadow = "none"; } });
+        btn.addEventListener("click", () => loadStudentData(studentId, pseudo, s));
+        sessionNav.appendChild(btn);
+      });
+      historyDiv.appendChild(sessionNav);
+    }
+
+    // Bouton Nouvelle partie
+    const btnNewSession = document.createElement("button");
+    btnNewSession.textContent = "Nouvelle partie";
+    btnNewSession.style.cssText = `
+      background: rgba(10,20,50,.45);
+      color: white;
+      border: 1px solid rgba(96,165,250,.18);
+      padding: 9px 18px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      backdrop-filter: blur(8px);
+      transition: box-shadow .2s, border-color .2s;
+    `;
+    btnNewSession.addEventListener("mouseenter", () => { btnNewSession.style.borderColor = "rgba(96,165,250,.35)"; btnNewSession.style.boxShadow = "0 0 14px rgba(96,165,250,.15)"; });
+    btnNewSession.addEventListener("mouseleave", () => { btnNewSession.style.borderColor = "rgba(96,165,250,.18)"; btnNewSession.style.boxShadow = "none"; });
+    btnNewSession.addEventListener("click", async () => {
+      if (!confirm("Lancer une nouvelle partie pour cet élève ?")) return;
+      const updated = await window.startNewSession(studentId);
+      if (updated) {
+        console.log("Nouvelle session lancée");
+        await loadStudents();
+        await loadStudentData(studentId, pseudo, updated.session);
+      }
+    });
+    historyDiv.appendChild(btnNewSession);
+
+    // Bouton Supprimer cette session
+    const btnDeleteSession = document.createElement("button");
+    btnDeleteSession.textContent = "Supprimer cette session";
+    btnDeleteSession.style.cssText = `
+      background: rgba(127,29,29,.25);
+      color: #f87171;
+      border: 1px solid rgba(239,68,68,.25);
+      padding: 9px 18px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      margin-left: 8px;
+      backdrop-filter: blur(8px);
+      transition: box-shadow .2s, border-color .2s;
+    `;
+    btnDeleteSession.addEventListener("mouseenter", () => { btnDeleteSession.style.borderColor = "rgba(239,68,68,.45)"; btnDeleteSession.style.boxShadow = "0 0 14px rgba(239,68,68,.15)"; });
+    btnDeleteSession.addEventListener("mouseleave", () => { btnDeleteSession.style.borderColor = "rgba(239,68,68,.25)"; btnDeleteSession.style.boxShadow = "none"; });
+    btnDeleteSession.addEventListener("click", async () => {
+      if (!confirm(`Supprimer définitivement la session ${session} de ${pseudo} ?\n\nLes sessions suivantes seront renumérotées (S${session+1} → S${session}, etc.).\n\nAction irréversible.`)) return;
+      try {
+        // 1. Récupérer les series_id exacts de cette session
+        const { data: seriesToDelete, error: seriesErr } = await supabaseClient
+          .from("series_results")
+          .select("id")
+          .eq("student_id", studentId)
+          .eq("session", session);
+        if (seriesErr) throw seriesErr;
+
+        // 2. Supprimer question_results via series_id (ciblage exact, pas via numéro de session)
+        if (seriesToDelete && seriesToDelete.length > 0) {
+          const ids = seriesToDelete.map(s => s.id);
+          const { error: qErr } = await supabaseClient
+            .from("question_results")
+            .delete()
+            .in("series_id", ids);
+          if (qErr) throw qErr;
+        }
+
+        // 3. Supprimer series_results de cette session
+        const { error: srErr } = await supabaseClient
+          .from("series_results")
+          .delete()
+          .eq("student_id", studentId)
+          .eq("session", session);
+        if (srErr) throw srErr;
+
+        // 4. Renumérotation : toutes les sessions > session décrémentées de 1.
+        //    Ordre ASC obligatoire — le trou laissé par la suppression garantit
+        //    qu'on ne collisionne jamais (oldS → oldS-1 est toujours libre).
+        const { data: higherSeries, error: hsErr } = await supabaseClient
+          .from("series_results").select("session")
+          .eq("student_id", studentId).gt("session", session);
+        if (hsErr) throw hsErr;
+        const higherSessions = Array.from(new Set((higherSeries || []).map(r => r.session)))
+          .sort((a, b) => a - b);
+        for (const oldS of higherSessions) {
+          const newS = oldS - 1;
+          const { error: e1 } = await supabaseClient
+            .from("series_results").update({ session: newS })
+            .eq("student_id", studentId).eq("session", oldS);
+          if (e1) throw e1;
+          const { error: e2 } = await supabaseClient
+            .from("question_results").update({ session: newS })
+            .eq("student_id", studentId).eq("session", oldS);
+          if (e2) throw e2;
+        }
+
+        // 5. Mettre à jour students.session + agrégats sur la nouvelle session courante
+        const { data: remaining } = await supabaseClient
+          .from("series_results").select("session")
+          .eq("student_id", studentId)
+          .order("session", { ascending: false }).limit(1);
+        const newCurrent = remaining?.[0]?.session ?? null;
+
+        if (newCurrent == null) {
+          await supabaseClient.from("students").update({
+            session: 1, xp_total: 0, best_score: 0, best_avg_time: null, games_played: 0,
+            updated_at: new Date().toISOString()
+          }).eq("id", studentId);
+        } else {
+          const { data: curSeries } = await supabaseClient
+            .from("series_results").select("score, avg_time")
+            .eq("student_id", studentId).eq("session", newCurrent);
+          const curQr = await fetchAllQR(() =>
+            supabaseClient.from("question_results").select("xp_delta")
+              .eq("student_id", studentId).eq("session", newCurrent)
+          );
+          const sumXp = (curQr || []).reduce((a, r) => a + (Number(r.xp_delta) || 0), 0);
+          const arr = curSeries || [];
+          const bestScore = arr.length ? Math.max(...arr.map(r => r.score || 0)) : 0;
+          const validTimes = arr.map(r => r.avg_time).filter(t => t != null);
+          const bestAvgTime = validTimes.length ? Math.min(...validTimes) : null;
+          await supabaseClient.from("students").update({
+            session: newCurrent,
+            xp_total: Math.max(0, sumXp),
+            best_score: bestScore,
+            best_avg_time: bestAvgTime,
+            games_played: arr.length,
+            updated_at: new Date().toISOString()
+          }).eq("id", studentId);
+        }
+
+        console.log(`Session ${session} supprimée pour ${pseudo} — ${higherSessions.length} session(s) renumérotée(s).`);
+        await loadStudents();
+
+        if (newCurrent != null) {
+          await loadStudentData(studentId, pseudo, newCurrent);
+        } else {
+          document.getElementById("history").innerHTML = `<p style="color: #94a3b8; margin-top: 8px;">Toutes les sessions ont été supprimées.</p>`;
+        }
+      } catch(e) {
+        console.error("Erreur suppression session:", e);
+        alert("Erreur lors de la suppression.");
+      }
+    });
+    historyDiv.appendChild(btnDeleteSession);
+
+    // Bouton Supprimer l'élève
+    const btnDeleteStudent = document.createElement("button");
+    btnDeleteStudent.textContent = "Supprimer l'élève";
+    btnDeleteStudent.style.cssText = `
+      background: linear-gradient(135deg,#991b1b,#7f1d1d);
+      color: white;
+      border: 1px solid rgba(239,68,68,.4);
+      padding: 9px 18px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      margin-left: 8px;
+      box-shadow: 0 0 12px rgba(239,68,68,.15);
+      transition: box-shadow .2s, transform .12s;
+    `;
+    btnDeleteStudent.addEventListener("mouseenter", () => btnDeleteStudent.style.background = "#991b1b");
+    btnDeleteStudent.addEventListener("mouseleave", () => btnDeleteStudent.style.background = "#7f1d1d");
+    btnDeleteStudent.addEventListener("click", async () => {
+      if (!confirm(`Supprimer définitivement l'élève "${pseudo}" et toutes ses données ?\n\nCette action est irréversible.`)) return;
+      try {
+        await supabaseClient.from("question_results").delete().eq("student_id", studentId);
+        await supabaseClient.from("series_results").delete().eq("student_id", studentId);
+        await supabaseClient.from("students").delete().eq("id", studentId);
+        console.log(`Élève ${pseudo} supprimé`);
+        // Reset localStorage côté élève pour qu'il puisse saisir un nouveau pseudo
+        localStorage.removeItem("leveling_math_v38_save");
+        localStorage.removeItem("currentSession");
+        await loadStudents();
+        document.getElementById("history").innerHTML = `<p style="color: #94a3b8; margin-top: 8px;">Élève "${pseudo}" supprimé.</p>`;
+      } catch(e) {
+        console.error("Erreur suppression élève:", e);
+        alert("Erreur lors de la suppression.");
+      }
+    });
+    historyDiv.appendChild(btnDeleteStudent);
+
+    // Rang
+    const rankDiv = document.createElement("div");
+    rankDiv.style.cssText = `background: ${rank.color}15; padding: 16px 20px; border-radius: 16px; margin-bottom: 20px; border: 1px solid ${rank.color}40; backdrop-filter: blur(10px); box-shadow: 0 0 20px ${rank.color}15;`;
+    rankDiv.innerHTML = `
+      <h3 style="margin: 0; color: ${rank.color};">${rank.icon} ${rank.label}</h3>
+      <p style="margin: 5px 0 0 0;">${rank.progress}</p>
+    `;
+    historyDiv.appendChild(rankDiv);
+
+    // Stats globales
+    const statsP = document.createElement("div");
+    statsP.innerHTML = `<p>📊 Score moyen : <span style="color:${getAverageScoreColor(avgScore)};font-weight:700">${avgScore}</span></p><p>⏱️ Temps moyen : <span style="color:${getAverageTimeColor(avgTime)};font-weight:700">${avgTime !== "-" ? avgTime + "s" : "-"}</span></p>`;
+    historyDiv.appendChild(statsP);
+
+    // Stats par niveau
+    const levelsDiv = document.createElement("div");
+    levelsDiv.style.cssText = "display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 20px;";
+    Object.keys(statsByLevel).forEach(level => {
+      const levelStats = statsByLevel[level];
+      const avgScoreLevel = (levelStats.scores.reduce((a, b) => a + b, 0) / levelStats.count).toFixed(2);
+      const avgTimeLevel = (levelStats.times.reduce((a, b) => a + b, 0) / levelStats.count).toFixed(2);
+      const levelCard = document.createElement("div");
+      levelCard.style.cssText = "background: rgba(10,20,50,.45); backdrop-filter: blur(10px); border: 1px solid rgba(96,165,250,.18); padding: 16px 18px; border-radius: 16px; min-width: 200px; box-shadow: 0 0 12px rgba(96,165,250,.05), inset 0 1px 0 rgba(255,255,255,.05);";
+      levelCard.innerHTML = `
+        <h3>${translateLevel(level)}</h3>
+        <p>Parties : ${levelStats.count}</p>
+        <p style="color: ${getAverageScoreColor(avgScoreLevel)}; font-weight: bold;">Score moyen : ${avgScoreLevel}</p>
+        <p style="color: ${getAverageTimeColor(avgTimeLevel)}; font-weight: bold;">Temps moyen : ${avgTimeLevel}s</p>
+      `;
+      levelsDiv.appendChild(levelCard);
+    });
+    historyDiv.appendChild(levelsDiv);
+
+    if (data.length === 0) {
+      const empty = document.createElement("p");
+      empty.textContent = "Aucune série trouvée.";
+      historyDiv.appendChild(empty);
+      return;
+    }
+
+    // Tableau des séries
+    const table = document.createElement("table");
+    table.style.cssText = "width: 100%; border-collapse: collapse; background: rgba(10,20,50,.45); backdrop-filter: blur(14px); border: 1px solid rgba(96,165,250,.18); border-radius: 20px; overflow: hidden; box-shadow: 0 0 28px rgba(96,165,250,.08), 0 2px 40px rgba(0,0,0,.28);";
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Niveau</th>
+          <th style="color:#22c55e">✓ Justes</th>
+          <th style="color:#ef4444">✗ Fausses</th>
+          <th>Temps moy.</th>
+          <th>XP net</th>
+          <th>XP cumulé</th>
+          <th>Session</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const tbody = table.querySelector("tbody");
+    data.forEach(series => {
+      const tr = document.createElement("tr");
+      tr.style.cursor = "pointer";
+      tr.title = "Cliquer pour voir le détail question par question";
+
+      // XP net — source de vérité : question_results.xp_delta
+      const xpVal = series.id != null && xpBySeriesId[series.id] != null ? xpBySeriesId[series.id] : null;
+      const xpColor = xpVal == null ? "#64748b" : xpVal > 0 ? "#22c55e" : xpVal < 0 ? "#ef4444" : "";
+      const xpDisplay = xpVal == null ? "—" : xpVal > 0 ? "+" + xpVal : xpVal;
+
+      // XP cumulé — calculé en chrono avec plancher 0, lu par series.id
+      const xpCumul = xpCumulById[series.id] ?? null;
+
+      // Bonnes / fausses — source de vérité : question_results.is_correct (hors pénalités)
+      const nCorrect = correctBySeries[series.id] ?? null;
+      const nWrong   = wrongBySeries[series.id]   ?? null;
+
+      const hasPenalty = seriesWithPenalty.has(series.id);
+      const penaltyBadge = hasPenalty
+        ? ` <span title="Pénalité refresh −10 XP" style="font-size:11px;background:rgba(239,68,68,.2);color:#f87171;border-radius:4px;padding:1px 5px;font-weight:700">🔄 −10</span>`
+        : "";
+
+      tr.innerHTML = `
+        <td>${translateLevel(series.level)}</td>
+        <td style="color:#22c55e;font-weight:800">${nCorrect ?? "—"}</td>
+        <td style="color:${nWrong > 0 ? "#ef4444" : "#64748b"};font-weight:800">${nWrong ?? "—"}</td>
+        <td style="color:${getAverageTimeColor(series.avg_time)};font-weight:700">${series.avg_time ? series.avg_time.toFixed(1) + " s" : "—"}</td>
+        <td style="color:${xpColor};font-weight:800">${xpDisplay}${penaltyBadge}</td>
+        <td style="color:#60a5fa;font-weight:700">${xpCumul ?? "—"} XP</td>
+        <td style="color:#64748b;font-size:13px">S${series.session ?? "—"}</td>
+        <td style="font-size:13px">${new Date(series.created_at).toLocaleString("fr-FR")}</td>
+      `;
+      tr.addEventListener("click", () => loadSeriesDetail(series.id, series, pseudo, studentId, session));
+      tbody.appendChild(tr);
+    });
+    historyDiv.appendChild(table);
+
+    // ── Analyse par type de calcul ────────────────────────────────────────────
+    // Agrège tous les question_results de la session (hors pénalités refresh)
+    // pour identifier les forces et faiblesses par catégorie.
+    const CAT_META = {
+      addition:        { label: "Addition",         icon: "➕", color: "#22c55e" },
+      soustraction:    { label: "Soustraction",     icon: "➖", color: "#38bdf8" },
+      multiplication:  { label: "Multiplication",   icon: "✖",  color: "#f59e0b" },
+      division:        { label: "Division",         icon: "➗", color: "#a78bfa" },
+      fractions:       { label: "Fractions",        icon: "½",  color: "#f87171" },
+      puissances:      { label: "Puissances",       icon: "²",  color: "#facc15" },
+      puissance:       { label: "Puissances",       icon: "²",  color: "#facc15" }, // variante
+      racines:         { label: "Racines carrées",  icon: "√",  color: "#34d399" },
+      racine:          { label: "Racines carrées",  icon: "√",  color: "#34d399" }, // variante
+      pourcentages:    { label: "Pourcentages",     icon: "%",  color: "#818cf8" },
+      pourcentage:     { label: "Pourcentages",     icon: "%",  color: "#818cf8" }, // variante
+      calcul_litteral: { label: "Calcul littéral",  icon: "x",  color: "#fb923c" },
+    };
+
+    // Agrégation par catégorie canonique (fusion des variantes singulier/pluriel)
+    const catStats = {};
+    questionData.forEach(q => {
+      if (q.category === "refresh_penalty" || !q.category) return;
+      const meta = CAT_META[q.category];
+      if (!meta) return; // catégorie inconnue
+      // Clé canonique = première clé du label dans CAT_META (ex: "puissance" → "puissances")
+      const canonKey = Object.keys(CAT_META).find(k => CAT_META[k].label === meta.label);
+      if (!catStats[canonKey]) catStats[canonKey] = { total: 0, correct: 0, totalTime: 0, timeCount: 0, meta };
+      catStats[canonKey].total++;
+      if (q.is_correct) catStats[canonKey].correct++;
+      if (q.response_time != null) {
+        catStats[canonKey].totalTime += q.response_time;
+        catStats[canonKey].timeCount++;
+      }
+    });
+
+    // Agrégation par sous-catégorie — même source, pas de requête supplémentaire
+    const subcatStats = {};
+    questionData.forEach(q => {
+      if (q.category === "refresh_penalty" || !q.subcategory) return;
+      if (!subcatStats[q.subcategory]) subcatStats[q.subcategory] = { total: 0, correct: 0, totalTime: 0, timeCount: 0 };
+      subcatStats[q.subcategory].total++;
+      if (q.is_correct) subcatStats[q.subcategory].correct++;
+      if (q.response_time != null) {
+        subcatStats[q.subcategory].totalTime += q.response_time;
+        subcatStats[q.subcategory].timeCount++;
+      }
+    });
+
+    const catEntries = Object.entries(catStats)
+      .filter(([, s]) => s.total > 0)
+      .sort((a, b) => {
+        // Trier par taux d'échec décroissant (les plus en difficulté en premier)
+        const rateA = a[1].correct / a[1].total;
+        const rateB = b[1].correct / b[1].total;
+        return rateA - rateB;
+      });
+
+    if (catEntries.length > 0) {
+      const catSection = document.createElement("div");
+      catSection.style.cssText = "margin-top: 32px;";
+
+      const catTitle = document.createElement("h3");
+      catTitle.textContent = "Par type de calcul";
+      catTitle.style.cssText = "margin: 0 0 14px; font-size: 13px; color: #93c5fd; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; text-shadow: 0 0 12px rgba(96,165,250,.3);";
+      catSection.appendChild(catTitle);
+
+      const catGrid = document.createElement("div");
+      catGrid.style.cssText = "display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px;";
+
+      catEntries.forEach(([, s]) => {
+        const { meta, total, correct, totalTime, timeCount } = s;
+        const wrong = total - correct;
+        const rate = Math.round((correct / total) * 100);
+        const avgT = timeCount > 0 ? (totalTime / timeCount).toFixed(1) : null;
+        const rateColor = rate >= 75 ? "#22c55e" : rate >= 50 ? "#f59e0b" : "#ef4444";
+
+        const card = document.createElement("div");
+        card.style.cssText = `
+          background: rgba(5,12,40,.55); backdrop-filter: blur(12px);
+          border: 1px solid rgba(96,165,250,.14); border-radius: 18px;
+          padding: 16px 18px;
+          border-left: 3px solid ${meta.color};
+          box-shadow: 0 0 12px rgba(96,165,250,.05), inset 0 1px 0 rgba(255,255,255,.05);
+          transition: border-color .2s, box-shadow .2s, transform .18s;
+        `;
+        card.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="font-size:18px;line-height:1">${meta.icon}</span>
+            <span style="font-weight:800;font-size:14px">${meta.label}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:#94a3b8;margin-bottom:4px">
+            <span>Questions</span>
+            <span style="color:#f8fafc;font-weight:700">${total}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:#94a3b8;margin-bottom:4px">
+            <span>Bonnes</span>
+            <span style="color:#22c55e;font-weight:700">${correct}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:#94a3b8;margin-bottom:4px">
+            <span>Erreurs</span>
+            <span style="color:${wrong > 0 ? "#ef4444" : "#64748b"};font-weight:700">${wrong}</span>
+          </div>
+          ${avgT != null ? `
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:#94a3b8;margin-bottom:10px">
+            <span>Temps moy.</span>
+            <span style="color:#f8fafc;font-weight:700">${avgT} s</span>
+          </div>` : `<div style="margin-bottom:10px"></div>`}
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#94a3b8;margin-bottom:4px">
+            <span>Réussite</span>
+            <span style="color:${rateColor};font-weight:800">${rate} %</span>
+          </div>
+          <div style="height:6px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden">
+            <div style="height:100%;width:${rate}%;background:${rateColor};border-radius:999px;transition:width .4s ease"></div>
+          </div>
+        `;
+        catGrid.appendChild(card);
+      });
+
+      catSection.appendChild(catGrid);
+      historyDiv.appendChild(catSection);
+    }
+
+    // ── Lacunes par sous-catégorie ────────────────────────────────────────────
+    // Seuil : ≥ 3 tentatives pour être significatif (évite le bruit sur 1-2 questions)
+    const weakSubcats = Object.entries(subcatStats)
+      .filter(([, s]) => s.total >= 3)
+      .map(([key, s]) => ({
+        key,
+        label: SUBCAT_LABELS[key] || key,
+        rate: Math.round((s.correct / s.total) * 100),
+        correct: s.correct,
+        total: s.total,
+        avgTime: s.timeCount > 0 ? (s.totalTime / s.timeCount).toFixed(1) : null
+      }))
+      .sort((a, b) => a.rate - b.rate); // plus faible en premier
+
+    if (weakSubcats.length > 0) {
+      const scSection = document.createElement("div");
+      scSection.style.cssText = "margin-top: 32px;";
+
+      const scTitle = document.createElement("h3");
+      scTitle.textContent = "Détail par sous-type de calcul";
+      scTitle.style.cssText = "margin: 0 0 14px; font-size: 13px; color: #93c5fd; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; text-shadow: 0 0 12px rgba(96,165,250,.3);";
+      scSection.appendChild(scTitle);
+
+      const scTable = document.createElement("table");
+      scTable.style.cssText = "width:100%;border-collapse:collapse;background:rgba(10,20,50,.45);backdrop-filter:blur(14px);border:1px solid rgba(96,165,250,.18);border-radius:20px;overflow:hidden;font-size:13px;box-shadow:0 0 28px rgba(96,165,250,.08),0 2px 40px rgba(0,0,0,.28);";
+      scTable.innerHTML = `
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:10px 14px;background:rgba(5,12,40,.60);color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.05em">Sous-type</th>
+            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.05em">Questions</th>
+            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#22c55e;font-size:12px;text-transform:uppercase">✓</th>
+            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#ef4444;font-size:12px;text-transform:uppercase">✗</th>
+            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.05em">Temps moy.</th>
+            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.05em">Réussite</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+      const scTbody = scTable.querySelector("tbody");
+      weakSubcats.forEach(sc => {
+        const rateColor = sc.rate >= 75 ? "#22c55e" : sc.rate >= 50 ? "#f59e0b" : "#ef4444";
+        const wrong = sc.total - sc.correct;
+        const tr = document.createElement("tr");
+        tr.style.cssText = "border-bottom:1px solid rgba(96,165,250,.06);";
+        tr.innerHTML = `
+          <td style="padding:10px 14px;font-weight:700">${sc.label}</td>
+          <td style="padding:10px 14px;text-align:center;color:#94a3b8">${sc.total}</td>
+          <td style="padding:10px 14px;text-align:center;color:#22c55e;font-weight:700">${sc.correct}</td>
+          <td style="padding:10px 14px;text-align:center;color:${wrong > 0 ? "#ef4444" : "#64748b"};font-weight:700">${wrong}</td>
+          <td style="padding:10px 14px;text-align:center;color:#94a3b8">${sc.avgTime != null ? sc.avgTime + " s" : "—"}</td>
+          <td style="padding:10px 14px;">
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="flex:1;height:6px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden">
+                <div style="height:100%;width:${sc.rate}%;background:${rateColor};border-radius:999px"></div>
+              </div>
+              <span style="color:${rateColor};font-weight:800;font-size:13px;white-space:nowrap">${sc.rate} %</span>
+            </div>
+          </td>
+        `;
+        scTbody.appendChild(tr);
+      });
+      scSection.appendChild(scTable);
+      historyDiv.appendChild(scSection);
+    }
+
+    // ── Plan de révision ──────────────────────────────────────────────────────
+    // Synthèse actionnable : catégories faibles (< 60%) + sous-types faibles (< 50%, ≥ 3 tentatives)
+    const weakCats = catEntries.filter(([, s]) => s.total >= 5 && (s.correct / s.total) < 0.60);
+    const criticalSubcats = weakSubcats.filter(sc => sc.rate < 50);
+
+    if (weakCats.length > 0 || criticalSubcats.length > 0) {
+      const planSection = document.createElement("div");
+      planSection.style.cssText = "margin-top: 32px;";
+
+      const planTitle = document.createElement("h3");
+      planTitle.textContent = "Plan de révision";
+      planTitle.style.cssText = "margin: 0 0 14px; font-size: 13px; color: #93c5fd; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; text-shadow: 0 0 12px rgba(96,165,250,.3);";
+      planSection.appendChild(planTitle);
+
+      const planCard = document.createElement("div");
+      planCard.style.cssText = "background:rgba(10,20,50,.45);backdrop-filter:blur(14px);border:1px solid rgba(96,165,250,.18);border-radius:18px;padding:18px 20px;display:flex;flex-direction:column;gap:14px;box-shadow:0 0 28px rgba(96,165,250,.08),inset 0 1px 0 rgba(255,255,255,.07);";
+
+      // Catégories prioritaires
+      if (weakCats.length > 0) {
+        const block = document.createElement("div");
+        block.innerHTML = `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:8px;font-weight:700">Catégories à retravailler</div>`;
+        weakCats.slice(0, 3).forEach(([, s]) => {
+          const rate = Math.round((s.correct / s.total) * 100);
+          const rateColor = rate >= 50 ? "#f59e0b" : "#ef4444";
+          const pill = document.createElement("div");
+          pill.style.cssText = "display:inline-flex;align-items:center;gap:8px;background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.2);border-radius:999px;padding:5px 12px;margin:0 6px 6px 0;";
+          pill.innerHTML = `
+            <span style="font-size:16px">${s.meta.icon}</span>
+            <span style="font-weight:800;font-size:14px">${s.meta.label}</span>
+            <span style="color:${rateColor};font-weight:700;font-size:13px">${rate} %</span>
+          `;
+          block.appendChild(pill);
+        });
+        planCard.appendChild(block);
+      }
+
+      // Sous-types critiques
+      if (criticalSubcats.length > 0) {
+        const block = document.createElement("div");
+        block.innerHTML = `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:8px;font-weight:700">Sous-types critiques (< 50 %)</div>`;
+        criticalSubcats.slice(0, 5).forEach(sc => {
+          const pill = document.createElement("div");
+          pill.style.cssText = "display:inline-flex;align-items:center;gap:8px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.28);border-radius:999px;padding:5px 12px;margin:0 6px 6px 0;";
+          pill.innerHTML = `
+            <span style="font-weight:700;font-size:13px">${sc.label}</span>
+            <span style="background:#ef4444;color:white;font-size:11px;font-weight:800;padding:1px 6px;border-radius:999px">${sc.rate} %</span>
+            <span style="color:#64748b;font-size:11px">${sc.correct}/${sc.total}</span>
+          `;
+          block.appendChild(pill);
+        });
+        planCard.appendChild(block);
+      }
+
+      // Mention "Pas de lacune détectée"
+      if (weakCats.length === 0 && criticalSubcats.length === 0) {
+        planCard.innerHTML = `<p style="color:#22c55e;font-weight:700;margin:0">✅ Aucune lacune critique détectée sur cette session.</p>`;
+      }
+
+      planSection.appendChild(planCard);
+      historyDiv.appendChild(planSection);
+    }
+  }
+
+  // ── Vue détail d'une série ────────────────────────────────────────────────
+  // SUBCAT_LABELS → js/config/categories.js
+
+  async function loadSeriesDetail(seriesId, series, pseudo, studentId, session) {
+    const historyDiv = document.getElementById("history");
+    historyDiv.innerHTML = "<p style='color:#94a3b8;padding:20px'>⏳ Chargement...</p>";
+
+    const { data: questions, error } = await supabaseClient
+      .from("question_results")
+      .select("*")
+      .eq("series_id", seriesId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      historyDiv.innerHTML = "<p style='color:#ef4444;padding:20px'>Erreur lors du chargement.</p>";
+      return;
+    }
+
+    function translateLevel(level) {
+      return { beginner: "Débutant", intermediate: "Intermédiaire", expert: "Expert" }[level] || level;
+    }
+
+    function parseVal(s) {
+      if (s == null || s === "") return null;
+      s = String(s).trim().replace(",", ".");
+      if (s.includes("/")) {
+        const [n, d] = s.split("/").map(Number);
+        return d !== 0 ? n / d : null;
+      }
+      const v = Number(s);
+      return isFinite(v) ? v : null;
+    }
+
+    function getQuestionStatus(q) {
+      if (q.is_correct) return "correct";
+      if (q.user_answer != null && q.user_answer !== "" && q.expected_answer != null) {
+        const u = parseVal(q.user_answer);
+        const e = parseVal(q.expected_answer);
+        if (u !== null && e !== null && Math.abs(u - e) < 1e-9) return "equiv";
+      }
+      return "wrong";
+    }
+
+    function getResponseTimeColor(seconds, subcategory) {
+      if (seconds == null) return "#94a3b8";
+      const T = {
+        // Débutant
+        addition_simple:                    [2, 5],
+        addition_retenue:                   [3, 6],
+        soustraction_simple:                [2, 5],
+        soustraction_retenue:               [3, 6],
+        multiplication_simple:              [3, 6],
+        carre_parfait:                      [3, 6],
+        // Intermédiaire
+        addition_grands_nombres:            [3, 6],
+        soustraction_grands_nombres:        [3, 6],
+        addition_relatifs:                  [5, 8],
+        soustraction_relatifs:              [5, 8],
+        multiplication_grands_nombres:      [4, 7],
+        division_euclidienne:               [4, 7],
+        racine_carree:                      [2, 4],
+        fractions_simplification:           [6, 10],
+        pourcentage_entier:                 [6, 10],
+        // Expert
+        puissance_carre:                    [2, 4],
+        puissance_cube:                     [2, 4],
+        puissance_10:                       [4, 8],
+        fractions_meme_denominateur:        [4, 7],
+        fractions_denominateurs_differents: [10, 15],
+        fractions_multiplication:           [5, 8],
+        fractions_division:                 [5, 8],
+        addition:                           [4, 8],
+        soustraction:                       [4, 8],
+        // Calcul littéral
+        reduction_termes:                   [5, 8],
+        distributivite_simple:              [7, 10],
+      };
+      const [green, orange] = T[subcategory] || [5, 8];
+      if (seconds <= green)  return "#22c55e";
+      if (seconds <= orange) return "#f59e0b";
+      return "#ef4444";
+    }
+
+    historyDiv.innerHTML = "";
+
+    // Bouton retour
+    const backBtn = document.createElement("button");
+    backBtn.textContent = "← Retour à l'historique";
+    backBtn.className = "detail-back-btn";
+    backBtn.addEventListener("click", () => loadStudentData(studentId, pseudo, session));
+    historyDiv.appendChild(backBtn);
+
+    // Calculs récapitulatifs — exclure les lignes pénalité des stats de questions
+    const penaltyRows = questions.filter(q => q.category === "refresh_penalty");
+    const questionRows = questions.filter(q => q.category !== "refresh_penalty");
+    const total = questionRows.length;
+    const correct = questionRows.filter(q => q.is_correct).length;
+    const xpQuestions = questionRows.reduce((s, q) => s + (Number(q.xp_delta) || 0), 0);
+    const xpPenalty = penaltyRows.reduce((s, q) => s + (Number(q.xp_delta) || 0), 0);
+    const xpTotal = xpQuestions + xpPenalty;
+    const times = questionRows.map(q => q.response_time).filter(t => t != null);
+    const avgTime = times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : null;
+    const dateStr = series.created_at ? new Date(series.created_at).toLocaleString("fr-FR") : "—";
+
+    // Sous-catégorie la plus en difficulté (hors lignes pénalité)
+    const subcatStats = {};
+    questionRows.forEach(q => {
+      const sc = q.subcategory || "inconnu";
+      if (!subcatStats[sc]) subcatStats[sc] = { total: 0, wrong: 0 };
+      subcatStats[sc].total++;
+      if (!q.is_correct) subcatStats[sc].wrong++;
+    });
+    const hardestEntry = Object.entries(subcatStats)
+      .filter(([, s]) => s.total >= 2 && s.wrong > 0)
+      .sort((a, b) => (b[1].wrong / b[1].total) - (a[1].wrong / a[1].total))[0];
+    const hardestLabel = hardestEntry
+      ? `${SUBCAT_LABELS[hardestEntry[0]] || hardestEntry[0]} (${hardestEntry[1].wrong}/${hardestEntry[1].total})`
+      : "—";
+
+    const scoreColor = correct / total >= 0.9 ? "#22c55e" : correct / total >= 0.7 ? "#f59e0b" : "#ef4444";
+
+    // Header
+    const header = document.createElement("div");
+    header.className = "detail-header";
+    header.innerHTML = `
+      <div class="detail-header-title">
+        <span class="detail-level-badge">${translateLevel(series.level)}</span>
+        <span class="detail-student">${pseudo}</span>
+        <span class="detail-date">${dateStr}</span>
+      </div>
+      <div class="detail-stats-row">
+        <div class="detail-stat-card">
+          <div class="detail-stat-label">Score</div>
+          <div class="detail-stat-value" style="color:${scoreColor}">${correct} / ${total}</div>
+        </div>
+        <div class="detail-stat-card">
+          <div class="detail-stat-label">XP net</div>
+          <div class="detail-stat-value" style="color:${xpTotal >= 0 ? '#22c55e' : '#ef4444'}">${xpTotal >= 0 ? '+' : ''}${xpTotal}</div>
+          ${xpPenalty < 0 ? `<div class="detail-stat-value--small" style="color:#f87171;margin-top:2px">dont ${xpPenalty} pénalité refresh</div>` : ''}
+        </div>
+        <div class="detail-stat-card">
+          <div class="detail-stat-label">Temps moyen</div>
+          <div class="detail-stat-value" style="color:${getAverageTimeColor(avgTime)}">${avgTime ? avgTime + ' s' : '—'}</div>
+        </div>
+        <div class="detail-stat-card detail-stat-card--wide">
+          <div class="detail-stat-label">Point faible</div>
+          <div class="detail-stat-value detail-stat-value--small">${hardestLabel}</div>
+        </div>
+      </div>
+    `;
+    historyDiv.appendChild(header);
+
+    if (total === 0) {
+      const empty = document.createElement("p");
+      empty.style.cssText = "color:#94a3b8;margin-top:16px;";
+      empty.textContent = "Aucune question enregistrée pour cette série.";
+      historyDiv.appendChild(empty);
+      return;
+    }
+
+    // Tableau questions
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "detail-table-wrap";
+
+    const table = document.createElement("table");
+    table.className = "detail-table";
+    const thead = document.createElement("thead");
+    thead.innerHTML = `<tr>
+      <th>#</th><th>Question</th><th>Réponse élève</th>
+      <th>Bonne réponse</th><th>Statut</th>
+      <th>Type</th><th>Sous-catégorie</th><th>Temps</th><th>XP</th>
+    </tr>`;
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    let questionCounter = 0;
+    questions.forEach((q) => {
+      const tr = document.createElement("tr");
+
+      // ── Ligne pénalité refresh ──────────────────────────────────────────
+      if (q.category === "refresh_penalty") {
+        tr.style.cssText = "background:rgba(239,68,68,.10);";
+        tr.innerHTML = `
+          <td class="detail-idx" style="color:#f87171">🔄</td>
+          <td colspan="7" style="color:#f87171;font-weight:700;font-style:italic">
+            Pénalité refresh — série reprise après rechargement de la page
+          </td>
+          <td style="color:#f87171;font-weight:800;white-space:nowrap">−10 XP</td>
+        `;
+        tbody.appendChild(tr);
+        return;
+      }
+
+      // ── Ligne question normale ──────────────────────────────────────────
+      questionCounter++;
+      const status = getQuestionStatus(q);
+      tr.className = "detail-row detail-row--" + status;
+
+      const badge = status === "correct"
+        ? `<span class="badge badge--correct">✓ Juste</span>`
+        : status === "equiv"
+        ? `<span class="badge badge--equiv">≈ Équivalent</span>`
+        : `<span class="badge badge--wrong">✗ Faux</span>`;
+
+      const userAns = q.user_answer == null ? "—"
+        : q.user_answer === "" ? "<span style='color:#64748b;font-style:italic'>timeout</span>"
+        : q.user_answer;
+
+      // Type de calcul (category) — libellé lisible
+      const CAT_LABELS = {
+        addition:"Addition", soustraction:"Soustraction",
+        multiplication:"Multiplication", division:"Division",
+        fractions:"Fractions", puissances:"Puissances", puissance:"Puissances",
+        racines:"Racines", racine:"Racines",
+        pourcentages:"Pourcentages", pourcentage:"Pourcentages",
+        calcul_litteral:"Calcul littéral"
+      };
+      const catLabel = CAT_LABELS[q.category] || q.category || "—";
+
+      // XP par question
+      const qXp = q.xp_delta != null ? q.xp_delta : null;
+      const qXpColor = qXp == null ? "#64748b" : qXp > 0 ? "#22c55e" : qXp < 0 ? "#ef4444" : "#94a3b8";
+      const qXpDisplay = qXp == null ? "—" : qXp > 0 ? "+" + qXp : String(qXp);
+
+      tr.innerHTML = `
+        <td class="detail-idx">${questionCounter}</td>
+        <td class="detail-question">${q.question_text || "—"}</td>
+        <td class="detail-user-ans ans--${status}">${userAns}</td>
+        <td class="detail-expected">${q.expected_answer || "—"}</td>
+        <td>${badge}</td>
+        <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${catLabel}</td>
+        <td><span class="subcat-tag">${SUBCAT_LABELS[q.subcategory] || q.subcategory || "—"}</span></td>
+        <td class="detail-time" style="color:${getResponseTimeColor(q.response_time, q.subcategory)}">${q.response_time != null ? q.response_time.toFixed(1) + " s" : "—"}</td>
+        <td style="color:${qXpColor};font-weight:800;white-space:nowrap">${qXpDisplay}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    historyDiv.appendChild(tableWrap);
+  }
+
+  // ── Fusion de pseudos (admin) ────────────────────────────────────────────
+  async function populateMergeSelects() {
+    console.log("[dashboard] populateMergeSelects — BEGIN");
+    const src = document.getElementById("mergeSrc");
+    const tgt = document.getElementById("mergeTgt");
+    if (!src || !tgt) return;
+
+    console.log("[dashboard] merge raw query = SELECT id, pseudo FROM students ORDER BY pseudo (no filter, no limit)");
+    const { data: students, error, status, count } = await supabaseClient
+      .from("students")
+      .select("id, pseudo", { count: "exact" })
+      .order("pseudo", { ascending: true });
+
+    console.log("[dashboard] merge raw query HTTP status =", status);
+    console.log("[dashboard] merge raw query returned", (students || []).length, "rows");
+    console.log("[dashboard] merge count (exact, post-RLS) =", count);
+    console.log("[dashboard] merge raw data =", students);
+
+    if (error) { console.error("[dashboard] populateMergeSelects error:", error); return; }
+
+    src.innerHTML = "";
+    tgt.innerHTML = "";
+    const optionsLog = [];
+    (students || []).forEach(s => {
+      const label = window.formatPseudo ? window.formatPseudo(s.pseudo) : s.pseudo;
+      src.appendChild(new Option(label, s.id));
+      tgt.appendChild(new Option(label, s.id));
+      optionsLog.push({ id: s.id, label });
+    });
+    console.log("[dashboard] merge select options =", optionsLog);
+    if ((students || []).length > 1) tgt.selectedIndex = 1;
+  }
+
+  async function mergePseudos() {
+    const btn = document.getElementById("mergeBtn");
+    const log = document.getElementById("mergeLog");
+    const srcSel = document.getElementById("mergeSrc");
+    const tgtSel = document.getElementById("mergeTgt");
+    log.textContent = "";
+    const addLog = (m) => { log.textContent += m + "\n"; log.scrollTop = log.scrollHeight; };
+
+    const srcId = srcSel.value;
+    const tgtId = tgtSel.value;
+    const srcLabel = srcSel.options[srcSel.selectedIndex]?.text || srcId;
+    const tgtLabel = tgtSel.options[tgtSel.selectedIndex]?.text || tgtId;
+
+    if (!srcId || !tgtId) { addLog("❌ Sélectionne une source et une cible."); return; }
+    if (srcId === tgtId) { addLog("❌ Source et cible identiques."); return; }
+
+    const ok = confirm(
+      `Les sessions de « ${srcLabel} » seront fusionnées dans « ${tgtLabel} » ` +
+      `et renumérotées à la suite.\nLe pseudo « ${srcLabel} » sera ensuite supprimé.\n` +
+      `Action irréversible. Continuer ?`
+    );
+    if (!ok) { addLog("⏹️ Annulé."); return; }
+
+    btn.disabled = true;
+    const originalBtnText = btn.textContent;
+    btn.textContent = "⏳ Fusion…";
+
+    try {
+      // 1. Charger source + cible
+      const [srcRes, tgtRes] = await Promise.all([
+        supabaseClient.from("students").select("*").eq("id", srcId).single(),
+        supabaseClient.from("students").select("*").eq("id", tgtId).single()
+      ]);
+      if (srcRes.error || !srcRes.data) throw new Error("Source introuvable: " + (srcRes.error?.message || ""));
+      if (tgtRes.error || !tgtRes.data) throw new Error("Cible introuvable: " + (tgtRes.error?.message || ""));
+      const srcStu = srcRes.data, tgtStu = tgtRes.data;
+      const srcDisp = window.formatPseudo ? window.formatPseudo(srcStu.pseudo) : srcStu.pseudo;
+      const tgtDisp = window.formatPseudo ? window.formatPseudo(tgtStu.pseudo) : tgtStu.pseudo;
+      addLog(`Source : ${srcDisp} (id=${srcStu.id}, session=${srcStu.session})`);
+      addLog(`Cible  : ${tgtDisp} (id=${tgtStu.id}, session=${tgtStu.session})`);
+
+      // 2. Sessions distinctes côté source (ASC)
+      const { data: srcSeries, error: e3 } = await supabaseClient
+        .from("series_results").select("session").eq("student_id", srcStu.id);
+      if (e3) throw e3;
+      const srcSessions = Array.from(new Set((srcSeries || []).map(r => r.session).filter(s => s != null)))
+        .sort((a, b) => a - b);
+      addLog(srcSessions.length
+        ? `Sessions source à déplacer : ${srcSessions.join(", ")}`
+        : "ℹ️ Aucune session côté source.");
+
+      // 3. Plus grand numéro de session côté cible (series ∪ questions ∪ students.session)
+      const [tgtSeriesRes, tgtQrRes] = await Promise.all([
+        supabaseClient.from("series_results").select("session").eq("student_id", tgtStu.id),
+        supabaseClient.from("question_results").select("session").eq("student_id", tgtStu.id)
+      ]);
+      const tgtAllSess = [
+        ...((tgtSeriesRes.data) || []).map(r => r.session),
+        ...((tgtQrRes.data) || []).map(r => r.session),
+        tgtStu.session
+      ].filter(s => s != null);
+      const tgtMaxSession = tgtAllSess.length ? Math.max(...tgtAllSess) : 0;
+      addLog(`Session max cible avant fusion : ${tgtMaxSession}`);
+
+      // 4. Table de renumérotation
+      const remap = {};
+      srcSessions.forEach((oldS, i) => { remap[oldS] = tgtMaxSession + i + 1; });
+      srcSessions.forEach(s => addLog(`   S${s} → S${remap[s]}`));
+
+      // 5. Appliquer la renumérotation (DESC pour éviter toute collision même intra-source)
+      const sessionsDesc = [...srcSessions].sort((a, b) => b - a);
+      for (const oldS of sessionsDesc) {
+        const newS = remap[oldS];
+        const { error: uErr1 } = await supabaseClient.from("series_results")
+          .update({ student_id: tgtStu.id, session: newS })
+          .eq("student_id", srcStu.id).eq("session", oldS);
+        if (uErr1) throw new Error(`series_results S${oldS}: ${uErr1.message}`);
+        const { error: uErr2 } = await supabaseClient.from("question_results")
+          .update({ student_id: tgtStu.id, session: newS })
+          .eq("student_id", srcStu.id).eq("session", oldS);
+        if (uErr2) throw new Error(`question_results S${oldS}: ${uErr2.message}`);
+        addLog(`✅ Déplacé S${oldS} → S${newS}`);
+      }
+
+      // 6. Sécurité : rattacher tout résidu (session NULL) à la cible
+      await supabaseClient.from("series_results")
+        .update({ student_id: tgtStu.id }).eq("student_id", srcStu.id);
+      await supabaseClient.from("question_results")
+        .update({ student_id: tgtStu.id }).eq("student_id", srcStu.id);
+
+      // 7. Recalcul agrégats cible (session courante = max après fusion)
+      const newCurrentSession = (tgtMaxSession + srcSessions.length) || tgtMaxSession || 1;
+      const { data: tgtSeriesFinal } = await supabaseClient
+        .from("series_results").select("score, avg_time")
+        .eq("student_id", tgtStu.id).eq("session", newCurrentSession);
+      const tgtQrFinal = await fetchAllQR(() =>
+        supabaseClient.from("question_results")
+          .select("xp_delta")
+          .eq("student_id", tgtStu.id).eq("session", newCurrentSession)
+      );
+      const sumXp = (tgtQrFinal || []).reduce((a, r) => a + (Number(r.xp_delta) || 0), 0);
+      const seriesArr = tgtSeriesFinal || [];
+      const bestScore = seriesArr.length ? Math.max(...seriesArr.map(r => r.score || 0)) : 0;
+      const validTimes = seriesArr.map(r => r.avg_time).filter(t => t != null);
+      const bestAvgTime = validTimes.length ? Math.min(...validTimes) : null;
+      const gamesPlayed = seriesArr.length;
+
+      const { error: updErr } = await supabaseClient.from("students").update({
+        session: newCurrentSession,
+        xp_total: Math.max(0, sumXp),
+        best_score: bestScore,
+        best_avg_time: bestAvgTime,
+        games_played: gamesPlayed,
+        updated_at: new Date().toISOString()
+      }).eq("id", tgtStu.id);
+      if (updErr) throw new Error("Update cible: " + updErr.message);
+      addLog(`✅ Cible recalculée — session=${newCurrentSession}, xp_total=${Math.max(0, sumXp)}, best_score=${bestScore}, best_avg_time=${bestAvgTime ?? "—"}, games_played=${gamesPlayed}`);
+
+      // 8. Supprimer le pseudo source
+      const { error: delErr } = await supabaseClient.from("students").delete().eq("id", srcStu.id);
+      if (delErr) throw new Error("Suppression source: " + delErr.message);
+      addLog(`🗑️ Pseudo source « ${srcDisp} » supprimé.`);
+
+      addLog(`\n✅ Fusion terminée : « ${srcDisp} » → « ${tgtDisp} ».`);
+      btn.textContent = "✅ Fusionné";
+
+      await loadStudents();
+      await populateMergeSelects();
+      setTimeout(() => { btn.textContent = originalBtnText; btn.disabled = false; }, 2000);
+    } catch (e) {
+      console.error(e);
+      addLog("❌ " + e.message);
+      btn.textContent = "❌ Erreur";
+      setTimeout(() => { btn.textContent = originalBtnText; btn.disabled = false; }, 2500);
+    }
+  }
+
+</script>
+
+<script src="js/supabase/students.js"></script>
+<script>requireAdminAccess();</script>
+
+</body>
+</html>

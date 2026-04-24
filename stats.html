@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Mes statistiques — Leveling Math</title>
+<style>
+:root {
+  --bg1: #071225; --bg2: #0d1e3c;
+  --text: #f8fafc; --muted: #cbd5e1; --radius: 24px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; background: var(--bg1); }
+body {
+  position: relative;
+  min-height: 100vh; min-height: 100dvh;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--text);
+  background: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(24px, env(safe-area-inset-top)) 14px max(24px, env(safe-area-inset-bottom));
+}
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: -2;
+  background: url('image.png') center / cover no-repeat;
+  pointer-events: none;
+}
+body::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 38% 55% at 92% 42%, rgba(167,139,250,.07) 0%, transparent 70%),
+    radial-gradient(ellipse 28% 35% at 88% 18%, rgba(96,165,250,.09) 0%, transparent 65%),
+    linear-gradient(to right, rgba(5,10,30,.65) 35%, rgba(5,10,30,.20) 100%);
+}
+.app {
+  position: relative;
+  z-index: 0;
+  width: min(860px, 100%);
+  margin: 0 auto;
+  background: none;
+  overflow: visible;
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────────── */
+.hero {
+  padding: 28px 24px 22px;
+  text-align: center;
+}
+.hero h1 {
+  font-size: clamp(26px, 6vw, 48px);
+  font-weight: 900;
+  letter-spacing: -1px;
+  line-height: 1.05;
+}
+.hero h1 span {
+  color: #93c5fd;
+  text-shadow: 0 0 18px rgba(96,165,250,.55), 0 0 40px rgba(96,165,250,.25);
+}
+.hero p { margin-top: 8px; color: var(--muted); font-size: clamp(14px, 3vw, 17px); }
+.pseudo-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  background: rgba(255,255,255,.08);
+  border-radius: 999px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #dbeafe;
+}
+
+/* ── Contenu ───────────────────────────────────────────────────────────── */
+.content {
+  padding: 8px 14px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.section {
+  background: rgba(10,20,50,.45);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(96,165,250,.18);
+  border-radius: 20px;
+  padding: 22px 20px;
+  box-shadow: 0 0 28px rgba(96,165,250,.08), 0 2px 40px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.07);
+}
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: #93c5fd;
+  margin-bottom: 16px;
+  text-shadow: 0 0 12px rgba(96,165,250,.3);
+}
+
+/* ── Progression globale ───────────────────────────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+.stat-card {
+  background: rgba(5,12,40,.60);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(96,165,250,.16);
+  border-radius: 16px;
+  padding: 16px 14px;
+  text-align: center;
+  box-shadow: 0 0 12px rgba(96,165,250,.05), inset 0 1px 0 rgba(255,255,255,.05);
+  transition: border-color .2s, box-shadow .2s;
+}
+.stat-card:hover {
+  border-color: rgba(96,165,250,.30);
+  box-shadow: 0 0 20px rgba(96,165,250,.12);
+}
+.stat-card .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.stat-card .value { font-weight: 900; font-size: 26px; line-height: 1; color: var(--text); }
+.stat-card .value.empty { font-size: 20px; color: rgba(255,255,255,.2); }
+
+/* ── Cartes par catégorie ──────────────────────────────────────────────── */
+.calc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+.calc-card {
+  background: rgba(5,12,40,.55);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-radius: 18px;
+  padding: 18px;
+  border: 1px solid rgba(96,165,250,.14);
+  box-shadow: 0 0 16px rgba(96,165,250,.05), inset 0 1px 0 rgba(255,255,255,.06);
+  transition: border-color .2s, box-shadow .2s, transform .18s;
+}
+.calc-card:hover {
+  border-color: var(--cat-color, rgba(96,165,250,.30));
+  box-shadow: 0 0 24px var(--cat-glow, rgba(96,165,250,.15));
+  transform: translateY(-2px);
+}
+.calc-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.calc-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+  box-shadow: 0 0 14px var(--cat-glow, transparent);
+}
+.calc-name { font-weight: 800; font-size: 15px; }
+.calc-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.calc-row:last-child { border-bottom: none; }
+.calc-row .val { font-weight: 700; color: var(--text); }
+.calc-row .val.empty { color: rgba(255,255,255,.2); }
+
+/* ── Barre de taux de réussite ─────────────────────────────────────────── */
+.rate-bar-wrap { margin-top: 12px; }
+.rate-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.rate-label .rate-pct { font-weight: 800; color: var(--text); }
+.rate-bar {
+  height: 8px;
+  background: rgba(255,255,255,.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.rate-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width .5s ease;
+  box-shadow: 0 0 10px var(--cat-glow, transparent);
+}
+
+/* ── Historique des séries ──────────────────────────────────────────────── */
+.series-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(5,12,40,.50);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(96,165,250,.12);
+  border-radius: 14px;
+  font-size: 13px;
+  flex-wrap: wrap;
+  transition: border-color .2s;
+}
+.series-row:hover { border-color: rgba(96,165,250,.28); }
+.series-row .sr-level {
+  font-weight: 800;
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 9px;
+  background: rgba(96,165,250,.15);
+  border: 1px solid rgba(96,165,250,.20);
+  flex-shrink: 0;
+}
+.series-row .sr-score { color: var(--muted); }
+.series-row .sr-xp   { font-weight: 800; }
+.series-row .sr-date { color: rgba(255,255,255,.35); font-size: 12px; margin-left: auto; }
+.series-row .sr-penalty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(239,68,68,.18);
+  color: #f87171;
+  border-radius: 7px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ── Footer / bouton retour ────────────────────────────────────────────── */
+.footer { padding: 0 14px 24px; }
+.back-btn {
+  display: block;
+  width: 100%;
+  padding: 15px 16px;
+  background: linear-gradient(180deg, #38bdf8, #0ea5e9);
+  color: #082f49;
+  font-weight: 800;
+  font-size: 15px;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  text-align: center;
+  border: 1px solid rgba(56,189,248,.4);
+  box-shadow: 0 0 18px rgba(56,189,248,.25);
+  transition: box-shadow .2s, transform .12s;
+}
+.back-btn:hover {
+  box-shadow: 0 0 28px rgba(56,189,248,.5);
+  transform: translateY(-1px);
+}
+
+/* ── Mobile ────────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .content { padding: 8px 10px 20px; }
+  .section { padding: 16px 14px; }
+  .calc-grid { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .hero h1 { font-size: 24px; }
+  .hero { padding: 20px 14px 16px; }
+}
+
+/* ── Cursor trailing light (desktop uniquement) ──────────────────────── */
+#cursor-trail {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+}
+.cursor-trail__dot {
+  position: fixed;
+  left: 0; top: 0;
+  width: 10px; height: 10px;
+  margin-left: -5px; margin-top: -5px;
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(210,235,255,.95) 0%,
+    rgba(140,195,255,.55) 45%,
+    rgba(96,165,250,0) 80%);
+  filter: blur(1.5px);
+  opacity: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  will-change: transform, opacity;
+  transform: translate3d(-9999px, -9999px, 0);
+}
+@media (hover: none), (prefers-reduced-motion: reduce) {
+  #cursor-trail { display: none; }
+}
+
+/* ── Curseur custom (desktop uniquement) ─────────────────────────────── */
+#cursor-dot {
+  position: fixed;
+  left: 0; top: 0;
+  width: 18px; height: 18px;
+  margin-left: -9px; margin-top: -9px;
+  border-radius: 50%;
+  border: 1px solid rgba(180,215,255,.65);
+  background: radial-gradient(circle,
+    rgba(220,235,255,.85) 0%,
+    rgba(150,195,255,.35) 40%,
+    transparent 65%);
+  box-shadow: 0 0 8px rgba(130,185,255,.45);
+  pointer-events: none;
+  z-index: 10001;
+  opacity: 0;
+  transform: translate3d(-9999px, -9999px, 0);
+  will-change: transform, opacity;
+  transition: opacity .25s ease;
+}
+#cursor-dot.active { opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  * { cursor: none !important; }
+}
+@media (hover: none), (prefers-reduced-motion: reduce) {
+  #cursor-dot { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="hero">
+    <h1>Mes <span>statistiques</span></h1>
+    <p>Suis ta progression et identifie tes points forts.</p>
+    <div class="pseudo-banner" id="pseudoBanner">—</div>
+  </div>
+
+  <div class="content">
+
+    <div class="section">
+      <div class="section-title">Progression globale</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="label">XP total</div>
+          <div class="value empty" id="statXp">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Parties jouées</div>
+          <div class="value empty" id="statGames">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Meilleur score</div>
+          <div class="value empty" id="statBestScore">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Meilleur temps moy.</div>
+          <div class="value empty" id="statBestTime">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Session actuelle</div>
+          <div class="value empty" id="statSession">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Par type de calcul</div>
+      <div class="calc-grid" id="calcGrid">
+        <!-- Injecté par JS -->
+      </div>
+    </div>
+
+    <div class="section" id="seriesSection" style="display:none">
+      <div class="section-title">Dernières séries</div>
+      <div id="seriesList" style="display:flex;flex-direction:column;gap:8px">
+        <!-- Injecté par JS -->
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <button class="back-btn" onclick="window.location.href='./'">← Retour au jeu</button>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase/client.js"></script>
+<script src="js/supabase/students.js"></script>
+<script>
+  // ── Config catégories ────────────────────────────────────────────────────
+  const CATEGORIES = [
+    { key: "addition",         label: "Addition",          icon: "➕", color: "#22c55e" },
+    { key: "soustraction",     label: "Soustraction",      icon: "➖", color: "#38bdf8" },
+    { key: "multiplication",   label: "Multiplication",    icon: "✖️", color: "#f59e0b" },
+    { key: "division",         label: "Division",          icon: "➗", color: "#a78bfa" },
+    { key: "fractions",        label: "Fractions",         icon: "½",  color: "#f87171" },
+    { key: "puissances",       label: "Puissances",        icon: "²",  color: "#facc15" },
+    { key: "racines",          label: "Racines carrées",   icon: "√",  color: "#34d399" },
+    { key: "pourcentages",     label: "Pourcentages",      icon: "%",  color: "#818cf8" },
+    { key: "calcul_litteral",  label: "Calcul littéral",   icon: "x",  color: "#fb923c" },
+  ];
+
+  // ── Données par défaut ───────────────────────────────────────────────────
+  const emptyStats = () => ({ total: 0, correct: 0, totalTime: 0 });
+  const categoryStats = Object.fromEntries(CATEGORIES.map(c => [c.key, emptyStats()]));
+
+  // ── Rendu d'une card catégorie ───────────────────────────────────────────
+  function renderCalcCard(cat, stats) {
+    const { total, correct, totalTime } = stats;
+    const rate = total > 0 ? Math.round((correct / total) * 100) : null;
+    const avgTime = total > 0 ? (totalTime / total).toFixed(1) + " s" : null;
+    const rateColor = rate == null ? "#475569"
+      : rate >= 75 ? "#22c55e"
+      : rate >= 50 ? "#f59e0b"
+      : "#ef4444";
+
+    const card = document.createElement("div");
+    card.className = "calc-card";
+    card.style.setProperty("--cat-color", cat.color + "55");
+    card.style.setProperty("--cat-glow", cat.color + "30");
+    card.innerHTML = `
+      <div class="calc-header">
+        <div class="calc-icon" style="background: ${cat.color}18; color: ${cat.color}; border: 1px solid ${cat.color}30;">${cat.icon}</div>
+        <div class="calc-name">${cat.label}</div>
+      </div>
+      <div class="calc-row">
+        <span>Questions</span>
+        <span class="val ${total === 0 ? "empty" : ""}">${total > 0 ? total : "—"}</span>
+      </div>
+      <div class="calc-row">
+        <span>Temps moyen</span>
+        <span class="val ${!avgTime ? "empty" : ""}">${avgTime ?? "—"}</span>
+      </div>
+      <div class="rate-bar-wrap">
+        <div class="rate-label">
+          <span>Taux de réussite</span>
+          <span class="rate-pct" style="color: ${rateColor}">${rate != null ? rate + " %" : "—"}</span>
+        </div>
+        <div class="rate-bar">
+          <div class="rate-fill" style="width: ${rate ?? 0}%; background: ${rateColor};"></div>
+        </div>
+      </div>
+    `;
+    return card;
+  }
+
+  function renderAllCards(stats) {
+    const grid = document.getElementById("calcGrid");
+    grid.innerHTML = "";
+    CATEGORIES.forEach(cat => grid.appendChild(renderCalcCard(cat, stats[cat.key] || emptyStats())));
+  }
+
+  // ── Données locales (localStorage) ──────────────────────────────────────
+  const STORAGE_KEY = "leveling_math_v38_save";
+  let pseudo = "";
+  let currentSession = 1;
+
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    try {
+      const d = JSON.parse(raw);
+      pseudo = d.pseudo || "";
+      const xp = Number(d.xp) || 0;
+      const bestScore = Number(d.bestScore) || 0;
+      const statGames = Number(d.statGames) || 0;
+      const bestAvgTime = Number(d.statBestAvgTime) > 0 ? Number(d.statBestAvgTime).toFixed(1) + " s" : "—";
+      currentSession = d.localSession != null ? Number(d.localSession) : 1;
+
+      if (pseudo) document.getElementById("pseudoBanner").textContent = window.formatPseudo ? window.formatPseudo(pseudo) : pseudo;
+
+      const setVal = (id, v) => {
+        const el = document.getElementById(id);
+        el.textContent = v;
+        el.classList.remove("empty");
+      };
+      setVal("statXp", xp);
+      setVal("statGames", statGames);
+      setVal("statBestScore", bestScore);
+      setVal("statBestTime", bestAvgTime);
+      setVal("statSession", "S" + currentSession);
+    } catch(e) {}
+  }
+
+  // ── Rendu initial vide ───────────────────────────────────────────────────
+  renderAllCards(categoryStats);
+
+  // ── Mapping DB → clé CATEGORIES ─────────────────────────────────────────
+  // Source de vérité pour les valeurs de `category` stockées en base.
+  // Gère les variantes singulier/pluriel et les noms alternatifs.
+  // null = ignoré silencieusement (ex : refresh_penalty)
+  const DB_CATEGORY_MAP = {
+    addition:         "addition",
+    soustraction:     "soustraction",
+    multiplication:   "multiplication",
+    division:         "division",
+    fractions:        "fractions",
+    puissances:       "puissances",
+    puissance:        "puissances",       // variante singulier
+    racines:          "racines",
+    racine:           "racines",          // variante singulier
+    pourcentages:     "pourcentages",
+    pourcentage:      "pourcentages",     // variante singulier
+    calcul_litteral:  "calcul_litteral",
+    algebre:          "calcul_litteral",
+    algebra:          "calcul_litteral",
+    literal:          "calcul_litteral",
+    refresh_penalty:  null,               // ignoré (pénalité refresh)
+  };
+
+  // ── Chargement Supabase ──────────────────────────────────────────────────
+  async function loadCategoryStats() {
+    console.log("[stats] loadCategoryStats — pseudo:", JSON.stringify(pseudo), "| session:", currentSession);
+
+    if (!pseudo) {
+      console.warn("[stats] Pseudo vide → abandon (pas de données localStorage ?)");
+      return;
+    }
+    if (typeof window.saveStudent !== "function") {
+      console.error("[stats] window.saveStudent non disponible — supabase-test.js bien chargé ?");
+      return;
+    }
+
+    const student = await window.saveStudent(pseudo);
+    console.log("[stats] saveStudent →", student ? `id=${student.id} | pseudo=${student.pseudo} | session DB=${student.session}` : "null");
+    if (!student) {
+      console.error("[stats] Élève introuvable en base → abandon");
+      return;
+    }
+
+    const supabase = window.supabase.createClient(
+      "https://ypfgfvwpqcamcimppxaf.supabase.co",
+      "sb_publishable_j8u0ZTsNqHhSHL9jLmp9Sw_EuKb1ZKi"
+    );
+
+    // ── Pagination (Supabase tronque à 1000 lignes par défaut) ──────────────
+    async function fetchPagedQR(extraFilters) {
+      const BATCH = 1000;
+      let all = [], from = 0;
+      while (true) {
+        let q = supabase
+          .from("question_results")
+          .select("category, is_correct, response_time")
+          .eq("student_id", student.id)
+          .range(from, from + BATCH - 1);
+        for (const [col, val] of extraFilters) q = q.eq(col, val);
+        const { data, error } = await q;
+        if (error) { console.error("[stats] ❌ Erreur Supabase:", error); return null; }
+        if (!data || data.length === 0) break;
+        all = all.concat(data);
+        if (data.length < BATCH) break;
+        from += BATCH;
+      }
+      return all;
+    }
+
+    // Requête principale : filtrer par session
+    console.log("[stats] Requête question_results — student_id:", student.id, "| session:", currentSession);
+    let allData = await fetchPagedQR([["session", currentSession]]);
+    if (allData === null) return;
+
+    console.log("[stats] Lignes reçues (session", currentSession + "):", allData.length);
+
+    // Fallback : si 0 lignes, re-tenter sans filtre session pour diagnostic
+    if (allData.length === 0) {
+      console.warn("[stats] ⚠️ Aucune donnée pour la session", currentSession, "— tentative sans filtre session…");
+      const allSessions = await fetchPagedQR([]);
+      if (allSessions === null) return;
+      console.log("[stats] Sans filtre session :", allSessions.length, "lignes trouvées");
+      if (allSessions.length > 0) {
+        // Montrer la répartition par session pour aider au diagnostic
+        const bySession = {};
+        allSessions.forEach(r => {
+          // question_results n'expose pas `session` dans ce select — c'est normal
+        });
+        console.warn("[stats] Les données existent en base mais pas sous la session", currentSession,
+          "— vérifier que localSession dans localStorage correspond à student.session =", student.session);
+      }
+      // Utiliser toutes les sessions en fallback pour afficher quelque chose
+      allData = allSessions;
+      if (allData.length === 0) {
+        console.warn("[stats] Vraiment aucune question_result pour cet élève");
+        return;
+      }
+    }
+
+    // ── Log des catégories brutes reçues ─────────────────────────────────────
+    const rawCats = {};
+    allData.forEach(r => { rawCats[r.category ?? "null"] = (rawCats[r.category ?? "null"] || 0) + 1; });
+    console.log("[stats] Catégories brutes reçues depuis la DB:", rawCats);
+
+    // ── Agrégation par catégorie ──────────────────────────────────────────────
+    const stats = Object.fromEntries(CATEGORIES.map(c => [c.key, emptyStats()]));
+    let skippedUnknown = 0, skippedPenalty = 0;
+
+    allData.forEach(row => {
+      const catKey = DB_CATEGORY_MAP[row.category];
+      if (catKey === null) { skippedPenalty++; return; }   // refresh_penalty : ignoré
+      if (catKey === undefined) { skippedUnknown++; return; } // catégorie inconnue
+      const s = stats[catKey];
+      if (!s) return;
+      s.total++;
+      if (row.is_correct) s.correct++;
+      if (row.response_time != null) s.totalTime += row.response_time;
+    });
+
+    // ── Log du résultat de l'agrégation ──────────────────────────────────────
+    const nonEmpty = Object.entries(stats).filter(([, v]) => v.total > 0);
+    console.log("[stats] Agrégation finale (catégories avec données):",
+      nonEmpty.length > 0
+        ? Object.fromEntries(nonEmpty.map(([k, v]) => [k, { total: v.total, correct: v.correct }]))
+        : "AUCUNE (toutes à 0)"
+    );
+    if (skippedPenalty > 0)  console.log("[stats]", skippedPenalty, "lignes refresh_penalty ignorées");
+    if (skippedUnknown > 0)  console.warn("[stats] ⚠️", skippedUnknown, "lignes ignorées — catégorie inconnue du mapping");
+
+    renderAllCards(stats);
+    console.log("[stats] ✅ Cards rendues");
+  }
+
+  loadCategoryStats();
+
+  // ── Historique des dernières séries ─────────────────────────────────────
+  async function loadRecentSeries() {
+    if (!pseudo) return;
+    const student = typeof window.saveStudent === "function"
+      ? await window.saveStudent(pseudo) : null;
+    if (!student) return;
+
+    const supabase = window.supabase.createClient(
+      "https://ypfgfvwpqcamcimppxaf.supabase.co",
+      "sb_publishable_j8u0ZTsNqHhSHL9jLmp9Sw_EuKb1ZKi"
+    );
+
+    // Charger les 10 dernières séries + les lignes question_results pour détecter les pénalités
+    const [{ data: series }, { data: penalties }] = await Promise.all([
+      supabase.from("series_results")
+        .select("id, level, score, xp_gained, created_at")
+        .eq("student_id", student.id)
+        .eq("session", currentSession)
+        .order("created_at", { ascending: false })
+        .limit(10),
+      supabase.from("question_results")
+        .select("series_id, xp_delta")
+        .eq("student_id", student.id)
+        .eq("session", currentSession)
+        .eq("category", "refresh_penalty")
+    ]);
+
+    if (!series || series.length === 0) return;
+
+    // XP net réel par série depuis question_results (inclut les pénalités)
+    // On reconstruit le Σ xp_delta pour chaque série connue
+    const { data: allDeltas } = await supabase.from("question_results")
+      .select("series_id, xp_delta")
+      .in("series_id", series.map(s => s.id));
+
+    const xpBySeries = {};
+    (allDeltas || []).forEach(q => {
+      if (q.series_id != null)
+        xpBySeries[q.series_id] = (xpBySeries[q.series_id] || 0) + (Number(q.xp_delta) || 0);
+    });
+
+    // Séries ayant une pénalité refresh
+    const penaltySeries = new Set((penalties || []).map(p => p.series_id));
+
+    // Rendu
+    const levelLabel = { beginner: "⚔️ Débutant", intermediate: "🔥 Intermédiaire", expert: "💀 Expert" };
+    const list = document.getElementById("seriesList");
+    list.innerHTML = "";
+
+    series.forEach(s => {
+      const xpNet = xpBySeries[s.id] ?? null;
+      const hasPenalty = penaltySeries.has(s.id);
+      const xpDisplay = xpNet == null ? "—" : xpNet >= 0 ? `+${xpNet}` : `${xpNet}`;
+      const xpColor = xpNet == null ? "#64748b" : xpNet > 0 ? "#4ade80" : "#f87171";
+      const date = new Date(s.created_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+      const row = document.createElement("div");
+      row.className = "series-row";
+      row.innerHTML = `
+        <span class="sr-level">${levelLabel[s.level] || s.level}</span>
+        <span class="sr-score">Score : <strong>${s.score ?? "—"}/10</strong></span>
+        <span class="sr-xp" style="color:${xpColor}">XP net : ${xpDisplay}</span>
+        ${hasPenalty ? `<span class="sr-penalty">🔄 −10 pénalité refresh</span>` : ""}
+        <span class="sr-date">${date}</span>
+      `;
+      list.appendChild(row);
+    });
+
+    document.getElementById("seriesSection").style.display = "";
+  }
+
+  loadRecentSeries();
+</script>
+
+<div id="cursor-trail" aria-hidden="true"></div>
+<div id="cursor-dot" aria-hidden="true"></div>
+<script src="js/app/cursor-trail.js"></script>
+<script src="js/app/cursor-dot.js"></script>
+</body>
+</html>
