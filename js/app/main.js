@@ -2121,8 +2121,9 @@ async function syncStudentFromSupabase(authUser = null) {
 
     // ── Hydratation de l'état élève depuis Supabase (source de vérité) ───────
     console.log("[SYNC] hydration success");
+    const manualXpBonus = Number(student.manual_xp_bonus) || 0;
     pseudo          = window.normalizePseudo ? window.normalizePseudo(student.pseudo) : student.pseudo;
-    xp              = student.xp_total      || 0;
+    xp              = (Number(student.xp_total) || 0) + manualXpBonus;
     bestScore       = student.best_score    || 0;
     statBestAvgTime = student.best_avg_time || null;
     statGames       = student.games_played  || 0;
@@ -2137,6 +2138,7 @@ async function syncStudentFromSupabase(authUser = null) {
       user_id: authUser?.id || null,
       xp_local: xp,
       xp_supabase: student.xp_total,
+      manual_xp_bonus: manualXpBonus,
       session_id: localSession,
       source: "supabase"
     });

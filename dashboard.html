@@ -302,7 +302,7 @@
 
 <div class="recalibrate-section">
   <strong style="color: #fca5a5;">🔧 Recalibrage XP (données historiques)</strong>
-  <p style="font-size: 13px; color: #94a3b8; margin: 6px 0 12px;">Recalcule <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">series_results.xp_gained</code> et <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.xp_total</code> à partir de <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">question_results.xp_delta</code> + <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.manual_xp_bonus</code>.</p>
+  <p style="font-size: 13px; color: #94a3b8; margin: 6px 0 12px;">Recalcule <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">series_results.xp_gained</code> et <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.xp_total</code> à partir de <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">question_results.xp_delta</code>. L’affichage ajoute <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.manual_xp_bonus</code>.</p>
   <button id="recalibrateBtn" onclick="recalibrateXP()" style="background:linear-gradient(135deg,#ef4444,#dc2626);color:white;border:1px solid rgba(239,68,68,.4);padding:9px 20px;border-radius:12px;font-weight:700;cursor:pointer;font-size:13px;box-shadow:0 0 14px rgba(239,68,68,.2);transition:box-shadow .2s,transform .12s;">Recalibrer XP</button>
   <pre id="recalibrateLog" style="margin-top: 12px; font-size: 12px; color: #94a3b8; white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></pre>
 </div>
@@ -619,8 +619,8 @@
         .from("students").select("*");
       if (stErr) throw stErr;
       addLog(`   ${studentsBefore.length} élèves chargés`);
-      addLog(`   Note : le tableau affiche Σ xp_delta (question_results) + bonus manuel.`);
-      addLog(`   xp_total sert uniquement au tri et à la synchro inter-appareils.\n`);
+      addLog(`   Note : xp_total reste la progression normale calculée par question_results.`);
+      addLog(`   Le tableau affiche xp_total + manual_xp_bonus, sans trigger bloquant.\n`);
 
       let studentsFixed = 0, studentsSkipped = 0;
       const studentResults = []; // pour rapport final
@@ -629,13 +629,14 @@
         const currentSession = student.session || 1;
         const sigmaXpDelta = xpByStudentSession[`${student.id}_${currentSession}`] ?? 0;
         const manualBonus = Number(student.manual_xp_bonus) || 0;
-        const finalXpTotal = Math.max(0, sigmaXpDelta + manualBonus);
+        const recalibratedBaseXp = Math.max(0, sigmaXpDelta);
+        const displayedXpTotal = recalibratedBaseXp + manualBonus;
         const beforeXpTotal = student.xp_total;
         const displayPseudo = window.formatPseudo ? window.formatPseudo(student.pseudo) : student.pseudo;
 
-        if (finalXpTotal === beforeXpTotal) {
+        if (recalibratedBaseXp === beforeXpTotal) {
           studentsSkipped++;
-          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal: beforeXpTotal, displayed: finalXpTotal, status: "ok" });
+          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal: beforeXpTotal, displayed: displayedXpTotal, status: "ok" });
           continue;
         }
 
@@ -643,13 +644,13 @@
         addLog(`     AVANT xp_total DB : ${beforeXpTotal}`);
         addLog(`     Σ xp_delta        : ${sigmaXpDelta}`);
         addLog(`     bonus manuel      : ${manualBonus}`);
-        addLog(`     total final       : ${finalXpTotal}`);
+        addLog(`     total affiché     : ${displayedXpTotal}`);
 
         const { error: uErr } = await supabaseClient
-          .from("students").update({ xp_total: finalXpTotal }).eq("id", student.id);
+          .from("students").update({ xp_total: recalibratedBaseXp }).eq("id", student.id);
         if (uErr) {
           addLog(`     ⚠️ Erreur écriture: ${uErr.message}`);
-          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal: null, displayed: finalXpTotal, status: "error" });
+          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal: null, displayed: displayedXpTotal, status: "error" });
           continue;
         }
 
@@ -657,12 +658,12 @@
         const { data: checkStudent } = await supabaseClient
           .from("students").select("xp_total").eq("id", student.id).single();
         const afterXpTotal = checkStudent?.xp_total;
-        const match = afterXpTotal === finalXpTotal;
-        addLog(`     ÉCRIT             : ${finalXpTotal}`);
+        const match = afterXpTotal === recalibratedBaseXp;
+        addLog(`     ÉCRIT xp_total    : ${recalibratedBaseXp}`);
         addLog(`     LU APRÈS ÉCRITURE : ${afterXpTotal}  ${match ? "✓" : "⚠️ DIVERGENCE"}`);
-        addLog(`     AFFICHÉ TABLEAU   : ${finalXpTotal} (= Σ xp_delta + bonus manuel)`);
+        addLog(`     AFFICHÉ TABLEAU   : ${displayedXpTotal} (= xp_total + bonus manuel)`);
 
-        studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal, displayed: finalXpTotal, status: match ? "fixed" : "divergence" });
+        studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal, displayed: displayedXpTotal, status: match ? "fixed" : "divergence" });
         studentsFixed++;
       }
 
@@ -1168,7 +1169,7 @@
 
         if (newCurrent == null) {
           await supabaseClient.from("students").update({
-            session: 1, xp_total: Math.max(0, manualBonus), best_score: 0, best_avg_time: null, games_played: 0,
+            session: 1, xp_total: 0, best_score: 0, best_avg_time: null, games_played: 0,
             updated_at: new Date().toISOString()
           }).eq("id", studentId);
         } else {
@@ -1186,7 +1187,7 @@
           const bestAvgTime = validTimes.length ? Math.min(...validTimes) : null;
           await supabaseClient.from("students").update({
             session: newCurrent,
-            xp_total: Math.max(0, sumXp + manualBonus),
+            xp_total: Math.max(0, sumXp),
             best_score: bestScore,
             best_avg_time: bestAvgTime,
             games_played: arr.length,
@@ -1981,14 +1982,14 @@
       const { error: updErr } = await supabaseClient.from("students").update({
         session: newCurrentSession,
         manual_xp_bonus: mergedManualBonus,
-        xp_total: Math.max(0, sumXp + mergedManualBonus),
+        xp_total: Math.max(0, sumXp),
         best_score: bestScore,
         best_avg_time: bestAvgTime,
         games_played: gamesPlayed,
         updated_at: new Date().toISOString()
       }).eq("id", tgtStu.id);
       if (updErr) throw new Error("Update cible: " + updErr.message);
-      addLog(`✅ Cible recalculée — session=${newCurrentSession}, xp_total=${Math.max(0, sumXp + mergedManualBonus)}, bonus manuel=${mergedManualBonus}, best_score=${bestScore}, best_avg_time=${bestAvgTime ?? "—"}, games_played=${gamesPlayed}`);
+      addLog(`✅ Cible recalculée — session=${newCurrentSession}, xp_total=${Math.max(0, sumXp)}, bonus manuel=${mergedManualBonus}, affiché=${Math.max(0, sumXp) + mergedManualBonus}, best_score=${bestScore}, best_avg_time=${bestAvgTime ?? "—"}, games_played=${gamesPlayed}`);
 
       // 8. Supprimer le pseudo source
       const { error: delErr } = await supabaseClient.from("students").delete().eq("id", srcStu.id);

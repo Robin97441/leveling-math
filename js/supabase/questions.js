@@ -111,7 +111,7 @@ async function saveQuestionResult(
 
     const { data: freshStudent, error: freshError } = await _qClient
       .from("students")
-      .select("xp_total, best_score, best_avg_time, games_played, session")
+      .select("xp_total, manual_xp_bonus, best_score, best_avg_time, games_played, session")
       .eq("id", student.id)
       .single();
 
@@ -124,6 +124,7 @@ async function saveQuestionResult(
       student_id: student.id,
       xp_local_before_sync: typeof xp !== "undefined" ? xp : null,
       xp_supabase: freshStudent.xp_total,
+      manual_xp_bonus: freshStudent.manual_xp_bonus,
       session_id: freshStudent.session,
       games_played: freshStudent.games_played
     });
@@ -134,7 +135,7 @@ async function saveQuestionResult(
     }
 
     const previousLocalXp = typeof xp !== "undefined" ? Number(xp) || 0 : null;
-    const nextServerXp = Number(freshStudent.xp_total) || 0;
+    const nextServerXp = (Number(freshStudent.xp_total) || 0) + (Number(freshStudent.manual_xp_bonus) || 0);
     if (typeof xp !== "undefined") xp = nextServerXp;
     if (typeof bestScore !== "undefined") bestScore = Number(freshStudent.best_score) || 0;
     if (typeof statBestAvgTime !== "undefined") statBestAvgTime = freshStudent.best_avg_time || null;

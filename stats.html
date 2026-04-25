@@ -504,7 +504,7 @@ body::after {
       el.textContent = v;
       el.classList.remove("empty");
     };
-    setVal("statXp", Number(student.xp_total) || 0);
+    setVal("statXp", (Number(student.xp_total) || 0) + (Number(student.manual_xp_bonus) || 0));
     setVal("statGames", Number(student.games_played) || 0);
     setVal("statBestScore", Number(student.best_score) || 0);
     const bestAvgTime = Number(student.best_avg_time) > 0 ? Number(student.best_avg_time).toFixed(1) + " s" : "—";
@@ -564,7 +564,9 @@ body::after {
       student_id: student.id,
       pseudo: student.pseudo,
       session_id: currentSession,
-      xp_supabase: student.xp_total
+      xp_supabase: student.xp_total,
+      manual_xp_bonus: student.manual_xp_bonus,
+      xp_displayed: (Number(student.xp_total) || 0) + (Number(student.manual_xp_bonus) || 0)
     });
     return student;
   }
