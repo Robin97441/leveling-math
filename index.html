@@ -774,6 +774,38 @@ body.auth-visible { background: #071225 !important; }
   transition: color .18s, background .18s;
 }
 .auth-back-link:hover { color: #93c5fd; background: rgba(96,165,250,.08); }
+.auth-forgot-link {
+  display: block; width: fit-content; margin: 9px auto 0;
+  background: transparent; border: none; cursor: pointer;
+  color: rgba(191,219,254,.72); font-size: 12.5px; font-weight: 800; font-family: inherit;
+  padding: 6px 10px; border-radius: 999px;
+  transition: color .18s, background .18s, box-shadow .18s;
+}
+.auth-forgot-link:hover {
+  color: #bfdbfe;
+  background: rgba(96,165,250,.08);
+  box-shadow: 0 0 14px rgba(96,165,250,.10);
+}
+.auth-reset-intro {
+  display: grid;
+  gap: 6px;
+  margin: 2px 0 12px;
+  text-align: center;
+  animation: authStepInForward .24s ease-out both;
+}
+.auth-reset-title {
+  margin: 0;
+  color: #e0f2fe;
+  font-size: 16px;
+  font-weight: 900;
+}
+.auth-reset-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.4;
+}
 @keyframes authStepInForward {
   from { opacity: 0; transform: translateX(14px); }
   to   { opacity: 1; transform: translateX(0); }
@@ -821,6 +853,9 @@ body.auth-visible { background: #071225 !important; }
   .auth-field input { padding: 11px 13px; font-size: 14px; }
   .auth-btn-primary { padding: 12px; font-size: 14.5px; }
   .auth-step-indicator { margin: 4px 0 8px; }
+  .auth-reset-intro { margin-bottom: 10px; gap: 5px; }
+  .auth-reset-title { font-size: 15px; }
+  .auth-reset-text { font-size: 12px; }
 }
 /* Barre utilisateur connecté (dans le hero) */
 #auth-user-bar {
@@ -1139,6 +1174,10 @@ body.auth-transitioning .app {
       <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Se connecter</button>
       <button class="auth-tab" id="tab-signup" onclick="switchAuthTab('signup')">Créer un compte</button>
     </div>
+    <div class="auth-reset-intro" id="auth-reset-intro" style="display:none">
+      <h3 class="auth-reset-title">Réinitialiser le mot de passe</h3>
+      <p class="auth-reset-text">Entre l'adresse email de ton compte. Tu recevras un lien pour créer un nouveau mot de passe.</p>
+    </div>
     <div id="auth-pseudo-field" class="auth-field" style="display:none">
       <label for="auth-pseudo">Pseudo</label>
       <input type="text" id="auth-pseudo" placeholder="Ton pseudo dans le jeu" maxlength="20"
@@ -1173,6 +1212,7 @@ body.auth-transitioning .app {
     </div>
     <div class="auth-step-indicator" id="auth-step-indicator" style="display:none">Étape 1 sur 2</div>
     <button class="auth-btn-primary" id="auth-submit-btn" onclick="authSubmit()">Se connecter</button>
+    <button type="button" class="auth-forgot-link" id="auth-forgot-btn" onclick="authForgotPassword()">Mot de passe oublié ?</button>
     <button type="button" class="auth-back-link" id="auth-back-btn" onclick="authStepBack()" style="display:none">← Retour</button>
     <div class="auth-message" id="auth-message"></div>
   </div>

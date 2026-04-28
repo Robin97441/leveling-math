@@ -6,7 +6,7 @@
 // Doit être chargé en dernier (après client.js et le script principal).
 
 let _currentAuthUserId = null; // uuid Supabase Auth | null si non connecté
-let _authMode = "login";       // "login" | "signup" | "recovery"
+let _authMode = "login";       // "login" | "signup" | "recovery" | "reset_request"
 let _authStep = 1;             // pertinent uniquement en mode signup (1 = pseudo/emails, 2 = mots de passe)
 let _authPrevStep = 1;         // pour déterminer le sens de l'animation (forward / back)
 let _authRecoveryActive = _isPasswordRecoveryUrl();
@@ -31,6 +31,7 @@ function authStepBack() {
 function _authApplyLayout() {
   const isSignup = _authMode === "signup";
   const isRecovery = _authMode === "recovery";
+  const isResetRequest = _authMode === "reset_request";
   const step1 = isSignup && _authStep === 1;
   const step2 = isSignup && _authStep === 2;
 
@@ -40,24 +41,26 @@ function _authApplyLayout() {
   };
 
   const tabs = document.querySelector(".auth-tabs");
-  if (tabs) tabs.style.display = isRecovery ? "none" : "";
+  if (tabs) tabs.style.display = (isRecovery || isResetRequest) ? "none" : "";
 
-  document.getElementById("tab-login").classList.toggle("active", !isSignup && !isRecovery);
+  document.getElementById("tab-login").classList.toggle("active", !isSignup && !isRecovery && !isResetRequest);
   document.getElementById("tab-signup").classList.toggle("active", isSignup);
+  show("auth-reset-intro", isResetRequest);
 
   // Champs étape 1 (signup uniquement)
   show("auth-pseudo-field",        step1);
   show("auth-email-confirm-field", step1);
 
   // Email : login + signup step1
-  show("auth-email-field", (!isSignup || step1) && !isRecovery);
+  show("auth-email-field", ((!isSignup || step1) && !isRecovery) || isResetRequest);
 
   // Mots de passe : login + signup step2
-  show("auth-password-field",         (!isSignup || step2) || isRecovery);
+  show("auth-password-field",         ((!isSignup || step2) || isRecovery) && !isResetRequest);
   show("auth-password-confirm-field", step2 || isRecovery);
 
   // Bouton retour : signup step2 uniquement
   show("auth-back-btn", step2);
+  show("auth-forgot-btn", (!isSignup && !isRecovery) || isResetRequest);
 
   // Indicateur d'étape : signup uniquement
   const indicator = document.getElementById("auth-step-indicator");
@@ -70,9 +73,12 @@ function _authApplyLayout() {
   // Label bouton principal
   const submit = document.getElementById("auth-submit-btn");
   submit.textContent = isRecovery ? "Mettre à jour le mot de passe"
+                     : isResetRequest ? "Envoyer le lien"
                      : !isSignup ? "Se connecter"
                      :    step1 ? "Suivant"
                                 : "Créer mon compte";
+  const forgot = document.getElementById("auth-forgot-btn");
+  if (forgot) forgot.textContent = isResetRequest ? "Retour à la connexion" : "Mot de passe oublié ?";
 
   const passwordLabel = document.querySelector("label[for='auth-password']");
   if (passwordLabel) passwordLabel.textContent = isRecovery ? "Nouveau mot de passe" : "Mot de passe";
@@ -153,6 +159,10 @@ function _updateSignupSubmitState() {
     btn.disabled = !_validateStep2({ showErrors: false });
     return;
   }
+  if (_authMode === "reset_request") {
+    btn.disabled = false;
+    return;
+  }
   if (_authMode !== "signup") { btn.disabled = false; return; }
   btn.disabled = _authStep === 1
     ? !_validateStep1({ showErrors: false })
@@ -170,6 +180,7 @@ function _authTranslateError(msg) {
   if (msg.includes("Invalid login credentials"))        return "Email ou mot de passe incorrect.";
   if (msg.includes("Email not confirmed"))              return "Confirme ton email avant de te connecter.";
   if (msg.includes("User already registered"))          return "Cet email est déjà utilisé.";
+  if (msg.includes("User not found"))                   return "Aucun compte trouvé avec cet email.";
   if (msg.includes("Password should be at least"))      return "Mot de passe trop court (6 caractères min).";
   if (msg.includes("Unable to validate email address")) return "Adresse email invalide.";
   if (msg.includes("signup_disabled"))                  return "Les inscriptions sont désactivées.";
@@ -234,7 +245,10 @@ async function authSubmit() {
   const btn      = document.getElementById("auth-submit-btn");
   _authSetMessage("", "");
 
-  if (_authMode === "recovery") {
+  if (_authMode === "reset_request") {
+    await authSendResetPassword();
+    return;
+  } else if (_authMode === "recovery") {
     if (!_validateStep2()) { _updateSignupSubmitState(); return; }
   } else if (_authMode === "signup") {
     // Étape 1 : valider pseudo + emails, puis passer à l'étape 2 (pas de signUp ici).
@@ -337,9 +351,74 @@ async function authSubmit() {
     _authSetMessage(_authTranslateError(err.message), "error");
     btn.disabled = false;
     btn.textContent = _authMode === "recovery" ? "Mettre à jour le mot de passe"
+                    : _authMode === "reset_request" ? "Envoyer le lien"
                     : _authMode === "signup" ? "Créer mon compte"
                     : "Se connecter";
     _updateSignupSubmitState();
+  }
+}
+
+async function authForgotPassword() {
+  if (_authMode === "reset_request") {
+    _authMode = "login";
+    _authStep = 1;
+    _authSetMessage("", "");
+    _clearSignupErrors();
+    _authApplyLayout();
+    return;
+  }
+  if (_authMode !== "login") return;
+  _authSetMessage("", "");
+  _setFieldError("email", "");
+  _authMode = "reset_request";
+  _authStep = 1;
+  _authApplyLayout();
+  setTimeout(() => {
+    const emailInput = document.getElementById("auth-email");
+    if (emailInput) emailInput.focus();
+  }, 40);
+}
+
+async function authSendResetPassword() {
+  if (_authMode !== "reset_request") return;
+  _setFieldError("email", "");
+  _authSetMessage("", "");
+
+  const emailInput = document.getElementById("auth-email");
+  const email = (emailInput?.value || "").trim();
+  if (!email) {
+    _setFieldError("email", "Email requis pour réinitialiser le mot de passe.");
+    _authSetMessage("Entre l'adresse email de ton compte.", "error");
+    return;
+  }
+  if (!/^\S+@\S+\.\S+$/.test(email)) {
+    _setFieldError("email", "Email invalide.");
+    _authSetMessage("Adresse email invalide.", "error");
+    return;
+  }
+
+  const submitBtn = document.getElementById("auth-submit-btn");
+  const previousText = submitBtn?.textContent || "Envoyer le lien";
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Envoi…";
+  }
+
+  try {
+    const { error } = await _qClient.auth.resetPasswordForEmail(email, {
+      redirectTo: "https://leveling-math.netlify.app"
+    });
+    if (error) throw error;
+    console.log("[auth] reset password email sent", email);
+    _authSetMessage("Un email de réinitialisation a été envoyé.", "success");
+  } catch (err) {
+    console.error("[auth] resetPasswordForEmail error:", err);
+    _authSetMessage(_authTranslateError(err?.message) || "Impossible d'envoyer l'email de réinitialisation.", "error");
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = previousText;
+    }
   }
 }
 
