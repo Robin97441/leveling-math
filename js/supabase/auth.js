@@ -6,11 +6,13 @@
 // Doit être chargé en dernier (après client.js et le script principal).
 
 let _currentAuthUserId = null; // uuid Supabase Auth | null si non connecté
-let _authMode = "login";       // "login" | "signup"
+let _authMode = "login";       // "login" | "signup" | "recovery"
 let _authStep = 1;             // pertinent uniquement en mode signup (1 = pseudo/emails, 2 = mots de passe)
 let _authPrevStep = 1;         // pour déterminer le sens de l'animation (forward / back)
+let _authRecoveryActive = false;
 
 function switchAuthTab(mode) {
+  if (_authMode === "recovery") return;
   _authMode = mode;
   _authStep = 1;
   _authSetMessage("", "");
@@ -27,6 +29,7 @@ function authStepBack() {
 
 function _authApplyLayout() {
   const isSignup = _authMode === "signup";
+  const isRecovery = _authMode === "recovery";
   const step1 = isSignup && _authStep === 1;
   const step2 = isSignup && _authStep === 2;
 
@@ -35,7 +38,10 @@ function _authApplyLayout() {
     if (el) el.style.display = visible ? "" : "none";
   };
 
-  document.getElementById("tab-login").classList.toggle("active", !isSignup);
+  const tabs = document.querySelector(".auth-tabs");
+  if (tabs) tabs.style.display = isRecovery ? "none" : "";
+
+  document.getElementById("tab-login").classList.toggle("active", !isSignup && !isRecovery);
   document.getElementById("tab-signup").classList.toggle("active", isSignup);
 
   // Champs étape 1 (signup uniquement)
@@ -43,11 +49,11 @@ function _authApplyLayout() {
   show("auth-email-confirm-field", step1);
 
   // Email : login + signup step1
-  show("auth-email-field", !isSignup || step1);
+  show("auth-email-field", (!isSignup || step1) && !isRecovery);
 
   // Mots de passe : login + signup step2
-  show("auth-password-field",         !isSignup || step2);
-  show("auth-password-confirm-field", step2);
+  show("auth-password-field",         (!isSignup || step2) || isRecovery);
+  show("auth-password-confirm-field", step2 || isRecovery);
 
   // Bouton retour : signup step2 uniquement
   show("auth-back-btn", step2);
@@ -55,26 +61,32 @@ function _authApplyLayout() {
   // Indicateur d'étape : signup uniquement
   const indicator = document.getElementById("auth-step-indicator");
   if (indicator) {
-    indicator.style.display = isSignup ? "" : "none";
-    indicator.textContent = step1 ? "Étape 1 sur 2" : "Étape 2 sur 2";
+    indicator.style.display = (isSignup || isRecovery) ? "" : "none";
+    indicator.textContent = isRecovery ? "Nouveau mot de passe"
+                                      : step1 ? "Étape 1 sur 2" : "Étape 2 sur 2";
   }
 
   // Label bouton principal
   const submit = document.getElementById("auth-submit-btn");
-  submit.textContent = !isSignup ? "Se connecter"
-                     :    step1  ? "Suivant"
-                                 : "Créer mon compte";
+  submit.textContent = isRecovery ? "Mettre à jour le mot de passe"
+                     : !isSignup ? "Se connecter"
+                     :    step1 ? "Suivant"
+                                : "Créer mon compte";
 
-  document.getElementById("auth-password").autocomplete = isSignup ? "new-password" : "current-password";
+  const passwordLabel = document.querySelector("label[for='auth-password']");
+  if (passwordLabel) passwordLabel.textContent = isRecovery ? "Nouveau mot de passe" : "Mot de passe";
+  document.getElementById("auth-password").autocomplete = (isSignup || isRecovery) ? "new-password" : "current-password";
 
   _updateSignupSubmitState();
 
   // Animation directionnelle (forward / back) entre étapes
-  if (isSignup) {
+  if (isSignup || isRecovery) {
     const direction = _authStep >= _authPrevStep ? "forward" : "back";
     _authPrevStep = _authStep;
     const animClass = direction === "forward" ? "auth-step-in-forward" : "auth-step-in-back";
-    const targets = step1
+    const targets = isRecovery
+      ? ["auth-password-field", "auth-password-confirm-field", "auth-step-indicator"]
+      : step1
       ? ["auth-pseudo-field", "auth-email-field", "auth-email-confirm-field", "auth-step-indicator"]
       : ["auth-password-field", "auth-password-confirm-field", "auth-step-indicator", "auth-back-btn"];
     targets.forEach(id => {
@@ -136,6 +148,10 @@ function _validateSignup({ showErrors = true } = {}) {
 
 function _updateSignupSubmitState() {
   const btn = document.getElementById("auth-submit-btn");
+  if (_authMode === "recovery") {
+    btn.disabled = !_validateStep2({ showErrors: false });
+    return;
+  }
   if (_authMode !== "signup") { btn.disabled = false; return; }
   btn.disabled = _authStep === 1
     ? !_validateStep1({ showErrors: false })
@@ -159,13 +175,55 @@ function _authTranslateError(msg) {
   return msg;
 }
 
+function _isPasswordRecoveryUrl() {
+  const tokenSource = `${window.location.hash || ""}${window.location.search || ""}`;
+  return /(?:^|[&#?])type=recovery(?:&|$)/.test(tokenSource)
+      || /(?:^|[&#?])type=password_recovery(?:&|$)/.test(tokenSource);
+}
+
+function _clearPasswordRecoveryUrl() {
+  if (!window.history?.replaceState) return;
+  const cleanUrl = new URL(window.location.href);
+  cleanUrl.searchParams.delete("type");
+  cleanUrl.hash = "";
+  window.history.replaceState({}, document.title, cleanUrl.toString());
+}
+
+function _authEnterPasswordRecoveryMode(session = null) {
+  _authRecoveryActive = true;
+  _authMode = "recovery";
+  _authStep = 1;
+  _authShowAppInProgress = false;
+  _clearSignupErrors();
+  _authSetMessage("Choisis un nouveau mot de passe pour ton compte.", "");
+  document.getElementById("auth-password").value = "";
+  document.getElementById("auth-password-confirm").value = "";
+  if (session?.user) {
+    _currentAuthUserId = session.user.id;
+    window._currentAuthUserId = session.user.id;
+    window._levelingMathAuthUser = session.user;
+    console.log("[auth] PASSWORD_RECOVERY user:", { id: session.user.id, email: session.user.email });
+  }
+  document.body.classList.add("auth-visible");
+  document.getElementById("auth-overlay").style.display = "flex";
+  document.getElementById("auth-user-bar").classList.remove("visible");
+  _hideLoader();
+  _authApplyLayout();
+  setTimeout(() => {
+    const p = document.getElementById("auth-password");
+    if (p) p.focus();
+  }, 60);
+}
+
 async function authSubmit() {
   const email    = (document.getElementById("auth-email").value || "").trim();
   const password = document.getElementById("auth-password").value || "";
   const btn      = document.getElementById("auth-submit-btn");
   _authSetMessage("", "");
 
-  if (_authMode === "signup") {
+  if (_authMode === "recovery") {
+    if (!_validateStep2()) { _updateSignupSubmitState(); return; }
+  } else if (_authMode === "signup") {
     // Étape 1 : valider pseudo + emails, puis passer à l'étape 2 (pas de signUp ici).
     if (_authStep === 1) {
       if (!_validateStep1()) { _updateSignupSubmitState(); return; }
@@ -185,7 +243,26 @@ async function authSubmit() {
   btn.textContent = "Chargement…";
 
   try {
-    if (_authMode === "signup") {
+    if (_authMode === "recovery") {
+      const { error } = await _qClient.auth.updateUser({ password });
+      if (error) throw error;
+
+      _authSetMessage("Mot de passe mis à jour. Tu peux maintenant te connecter.", "success");
+      console.log("[auth] password recovery updateUser success");
+      _clearPasswordRecoveryUrl();
+      await _qClient.auth.signOut();
+
+      _authRecoveryActive = false;
+      _authMode = "login";
+      _authStep = 1;
+      document.getElementById("auth-password").value = "";
+      document.getElementById("auth-password-confirm").value = "";
+      _authApplyLayout();
+      _authShowOverlay();
+      _authSetMessage("Mot de passe mis à jour. Connecte-toi avec ton nouveau mot de passe.", "success");
+      btn.disabled = false;
+      return;
+    } else if (_authMode === "signup") {
       const pseudoRaw = document.getElementById("auth-pseudo").value || "";
       const pseudoVal = window.normalizePseudo ? window.normalizePseudo(pseudoRaw) : pseudoRaw.trim().toLowerCase();
 
@@ -246,7 +323,9 @@ async function authSubmit() {
   } catch (err) {
     _authSetMessage(_authTranslateError(err.message), "error");
     btn.disabled = false;
-    btn.textContent = _authMode === "signup" ? "Créer mon compte" : "Se connecter";
+    btn.textContent = _authMode === "recovery" ? "Mettre à jour le mot de passe"
+                    : _authMode === "signup" ? "Créer mon compte"
+                    : "Se connecter";
     _updateSignupSubmitState();
   }
 }
@@ -376,7 +455,17 @@ console.log("[INIT] auth chargé");
 // Écoute les changements d'état d'auth.
 _qClient.auth.onAuthStateChange(async (event, session) => {
   console.log("[auth] onAuthStateChange →", event, session ? `(${session.user?.email})` : "(pas de session)");
+  if (event === "PASSWORD_RECOVERY") {
+    console.log("[auth] PASSWORD_RECOVERY détecté");
+    _authEnterPasswordRecoveryMode(session);
+    return;
+  }
   if (event === "INITIAL_SESSION" || event === "SIGNED_IN") {
+    if (_authRecoveryActive || _isPasswordRecoveryUrl()) {
+      console.log("[auth] session recovery détectée → formulaire nouveau mot de passe");
+      _authEnterPasswordRecoveryMode(session);
+      return;
+    }
     if (session) {
       if (event === "SIGNED_IN") console.log("[auth] onAuthStateChange SIGNED_IN →", session.user?.email);
       await _authShowApp(session.user, event === "SIGNED_IN");

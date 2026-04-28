@@ -1092,6 +1092,7 @@ function updateRankUI(){
   const newIndex = rankIndexFromXp(xp);
   currentRankIndex = newIndex;
   const rank = RANKS[newIndex];
+  const rankNextHintEl = document.getElementById("rankNextHint");
 
   // Affiche le XP total brut dans le stat box
   if(xpTotalEl) xpTotalEl.textContent = xp;
@@ -1102,6 +1103,7 @@ function updateRankUI(){
     xpFillEl.style.width = "100%";
     xpValueEl.textContent = "MAX RANK 👑";
     rankLabelEl.textContent = rank.icon + " " + rank.name;
+    if(rankNextHintEl) rankNextHintEl.textContent = "Rang maximum atteint";
   } else {
     const minXP = rank.min;
     const maxXP = RANKS[newIndex + 1].min;
@@ -1109,6 +1111,7 @@ function updateRankUI(){
     xpFillEl.style.width = (progress * 100) + "%";
     xpValueEl.textContent = Math.max(0, xp - minXP) + " / " + (maxXP - minXP) + " XP";
     rankLabelEl.textContent = rank.icon + " " + rank.name;
+    if(rankNextHintEl) rankNextHintEl.textContent = "Encore " + Math.max(0, maxXP - xp) + " XP avant le prochain rang";
   }
   rankLabelEl.style.color = rank.glow ? rank.color : "";
   rankLabelEl.style.textShadow = rank.glow || "";
@@ -1717,17 +1720,41 @@ function endQuiz(){
   let xpLine;
   if (_refreshPenaltyApplied) {
     xpLine = `XP questions : <span style="color:#4ade80">${fmtXp(xpFromQuestions)}</span>`
-           + ` &nbsp;−&nbsp; pénalité refresh : <span style="color:#f87171">−10</span>`
-           + ` &nbsp;=&nbsp; XP net : <span style="color:${colorXp(xpNet)}">${fmtXp(xpNet)}</span>`;
+           + ` &nbsp;−&nbsp; pénalité refresh : <span style="color:#f87171">−10</span>`;
   } else {
-    xpLine = `XP net : <span style="color:${colorXp(xpNet)}">${fmtXp(xpNet)}</span>`;
+    xpLine = "";
   }
+  const resultMessage = pct === 100
+    ? (_bonusWasActive ? "Bonus x2 conservé" : "Bonus x2 débloqué")
+    : pct >= 70 ? "Belle série" : pct >= 40 ? "Progression solide" : "Nouvelle tentative conseillée";
+  const xpDetail = xpLine ? `<div class="result-xp-detail">${xpLine}</div>` : "";
   resultEl.innerHTML = `
-    <div style="font-size:16px;font-weight:700;color:var(--muted);margin-bottom:4px">
-      Score final : ${score}/${total} &nbsp;•&nbsp; Meilleur : ${bestScore}
+    <div class="result-panel">
+      <div class="result-panel-head">
+        <div class="result-kicker">Résumé de série</div>
+        <div class="result-encouragement">${resultMessage}</div>
+      </div>
+      <div class="result-metrics">
+        <div class="result-metric">
+          <span class="label">Score final</span>
+          <span class="value">${score}/${total}</span>
+        </div>
+        <div class="result-metric">
+          <span class="label">Meilleur score</span>
+          <span class="value">${bestScore}</span>
+        </div>
+        <div class="result-metric xp">
+          <span class="label">XP net</span>
+          <span class="value" style="color:${colorXp(xpNet)}">${fmtXp(xpNet)}</span>
+        </div>
+        <div class="result-metric">
+          <span class="label">Série</span>
+          <span class="value">${total} Q</span>
+        </div>
+      </div>
+      ${xpDetail}
+      ${buildCoachingFeedback(pct, avgTime)}
     </div>
-    <div style="font-size:14px;font-weight:700">${xpLine}</div>
-    ${buildCoachingFeedback(pct, avgTime)}
   `;
   resultEl.classList.add("challenge-result");
   answerInputEl.classList.add("hidden");
