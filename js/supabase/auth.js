@@ -9,7 +9,8 @@ let _currentAuthUserId = null; // uuid Supabase Auth | null si non connecté
 let _authMode = "login";       // "login" | "signup" | "recovery"
 let _authStep = 1;             // pertinent uniquement en mode signup (1 = pseudo/emails, 2 = mots de passe)
 let _authPrevStep = 1;         // pour déterminer le sens de l'animation (forward / back)
-let _authRecoveryActive = false;
+let _authRecoveryActive = _isPasswordRecoveryUrl();
+if (_authRecoveryActive) console.log("Recovery URL detected");
 
 function switchAuthTab(mode) {
   if (_authMode === "recovery") return;
@@ -176,9 +177,20 @@ function _authTranslateError(msg) {
 }
 
 function _isPasswordRecoveryUrl() {
-  const tokenSource = `${window.location.hash || ""}${window.location.search || ""}`;
-  return /(?:^|[&#?])type=recovery(?:&|$)/.test(tokenSource)
-      || /(?:^|[&#?])type=password_recovery(?:&|$)/.test(tokenSource);
+  const readParams = source => {
+    const cleaned = (source || "").replace(/^[#?]/, "");
+    return new URLSearchParams(cleaned);
+  };
+  const hashParams = readParams(window.location.hash);
+  const searchParams = readParams(window.location.search);
+  const getParam = key => hashParams.get(key) || searchParams.get(key);
+  const type = (getParam("type") || "").toLowerCase();
+  const hasRecoveryType = type === "recovery" || type === "password_recovery";
+  const hasTokenPair = !!getParam("access_token") && !!getParam("refresh_token");
+  const hasCode = !!getParam("code");
+  const urlText = `${window.location.href || ""}`.toLowerCase();
+  const hasRecoveryHint = urlText.includes("recovery") || urlText.includes("password_recovery");
+  return hasRecoveryType || (hasRecoveryHint && (hasTokenPair || hasCode));
 }
 
 function _clearPasswordRecoveryUrl() {
@@ -194,6 +206,7 @@ function _authEnterPasswordRecoveryMode(session = null) {
   _authMode = "recovery";
   _authStep = 1;
   _authShowAppInProgress = false;
+  window._authReadyPromise = Promise.resolve();
   _clearSignupErrors();
   _authSetMessage("Choisis un nouveau mot de passe pour ton compte.", "");
   document.getElementById("auth-password").value = "";
@@ -248,7 +261,7 @@ async function authSubmit() {
       if (error) throw error;
 
       _authSetMessage("Mot de passe mis à jour. Tu peux maintenant te connecter.", "success");
-      console.log("[auth] password recovery updateUser success");
+      console.log("Password updated successfully");
       _clearPasswordRecoveryUrl();
       await _qClient.auth.signOut();
 
@@ -355,6 +368,11 @@ function _hideLoader() {
 let _authShowAppInProgress = false;
 
 async function _authShowApp(user, fromLogin = false) {
+  if (_authRecoveryActive || _isPasswordRecoveryUrl()) {
+    console.log("Recovery mode active: skipping session restore");
+    _authEnterPasswordRecoveryMode({ user });
+    return;
+  }
   if (_authShowAppInProgress) {
     console.log("[auth] _authShowApp déjà en cours — appel dupliqué ignoré (event:", user.email, ")");
     return;
@@ -451,18 +469,23 @@ document.querySelectorAll(".auth-password-toggle").forEach(btn => {
 });
 
 console.log("[INIT] auth chargé");
+if (_authRecoveryActive) {
+  console.log("Recovery mode active: skipping session restore");
+  _authEnterPasswordRecoveryMode();
+}
 
 // Écoute les changements d'état d'auth.
 _qClient.auth.onAuthStateChange(async (event, session) => {
   console.log("[auth] onAuthStateChange →", event, session ? `(${session.user?.email})` : "(pas de session)");
   if (event === "PASSWORD_RECOVERY") {
+    console.log("Recovery URL detected");
     console.log("[auth] PASSWORD_RECOVERY détecté");
     _authEnterPasswordRecoveryMode(session);
     return;
   }
   if (event === "INITIAL_SESSION" || event === "SIGNED_IN") {
     if (_authRecoveryActive || _isPasswordRecoveryUrl()) {
-      console.log("[auth] session recovery détectée → formulaire nouveau mot de passe");
+      console.log("Recovery mode active: skipping session restore");
       _authEnterPasswordRecoveryMode(session);
       return;
     }
