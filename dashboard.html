@@ -5,6 +5,7 @@
   <title>Dashboard Prof</title>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+  <script src="js/config/levels.js"></script>
   <script src="js/config/ranks.js"></script>
   <script src="js/config/categories.js"></script>
   <script src="js/supabase/client.js"></script>
@@ -349,6 +350,22 @@
     })[char]);
   }
 
+  function getLevelRules(level) {
+    return (typeof LEVELS === "object" && LEVELS && LEVELS[level]) ? LEVELS[level] : null;
+  }
+
+  function getDisplayedQuestionXpDelta(question, level) {
+    const rawDelta = Number(question?.xp_delta) || 0;
+    if (!question || question.category === "refresh_penalty" || question.is_correct) return rawDelta;
+
+    const rules = getLevelRules(level);
+    if (!rules) return rawDelta;
+
+    const isTimeout = question.user_answer === "";
+    const penalty = Number(isTimeout ? rules.timeout : rules.wrong) || 0;
+    return penalty > 0 ? -penalty : 0;
+  }
+
   async function isAdminUser(user) {
     if (!user) return false;
     const email = String(user.email || "").toLowerCase();
@@ -573,33 +590,38 @@
       addLog("━━━ ÉTAPE 1 : question_results ━━━");
       const qRows = await fetchAllQR(() =>
         supabaseClient.from("question_results")
-          .select("student_id, series_id, session, xp_delta")
+          .select("student_id, series_id, session, xp_delta, is_correct, user_answer, category")
       );
       console.log("TOTAL recalibrage :", qRows.length);  // doit être > 1000
       const nullDelta = qRows.filter(q => q.xp_delta == null).length;
       addLog(`   ${qRows.length} lignes chargées  |  xp_delta null: ${nullDelta}`);
 
-      // Agréger par series_id et par (student_id, session)
-      const xpBySeries = {};
-      const xpByStudentSession = {};
-      qRows.forEach(q => {
-        if (q.series_id != null)
-          xpBySeries[q.series_id] = (xpBySeries[q.series_id] || 0) + (Number(q.xp_delta) || 0);
-        const sk = `${q.student_id}_${q.session}`;
-        xpByStudentSession[sk] = (xpByStudentSession[sk] || 0) + (Number(q.xp_delta) || 0);
-      });
-
       // ── ÉTAPE 2 : recalibrer series_results.xp_gained ───────────────────
       addLog("\n━━━ ÉTAPE 2 : series_results.xp_gained ━━━");
       const { data: seriesRows, error: sErr } = await supabaseClient
         .from("series_results")
-        .select("id, xp_gained, student_id, session");
+        .select("id, xp_gained, student_id, session, level, created_at")
+        .order("created_at", { ascending: true });
       if (sErr) throw sErr;
       addLog(`   ${seriesRows.length} séries chargées`);
 
+      // Même formule que loadStudents : getDisplayedQuestionXpDelta applique les
+      // règles de niveau courantes (pénalités plafonnées), computeFlooredXP applique
+      // le plancher courant (total ne descend pas sous 0 entre séries).
+      // Le recalibrage utilise EXACTEMENT cette formule pour que xp_total = ce qui est affiché.
+      const levelBySeriesId = {};
+      seriesRows.forEach(s => { if (s.id != null) levelBySeriesId[s.id] = s.level; });
+
+      const xpBySeriesDisplayed = {};
+      qRows.forEach(q => {
+        if (q.series_id != null)
+          xpBySeriesDisplayed[q.series_id] = (xpBySeriesDisplayed[q.series_id] || 0)
+            + getDisplayedQuestionXpDelta(q, levelBySeriesId[q.series_id]);
+      });
+
       let seriesFixed = 0, seriesSkipped = 0;
       for (const series of seriesRows) {
-        const correctXp = xpBySeries[series.id] ?? 0;
+        const correctXp = xpBySeriesDisplayed[series.id] ?? 0;
         if (correctXp === series.xp_gained) { seriesSkipped++; continue; }
         addLog(`   Série ${series.id} — AVANT: ${series.xp_gained}  CALCULÉ: ${correctXp}`);
         const { error: uErr } = await supabaseClient
@@ -619,30 +641,33 @@
         .from("students").select("*");
       if (stErr) throw stErr;
       addLog(`   ${studentsBefore.length} élèves chargés`);
-      addLog(`   Note : xp_total reste la progression normale calculée par question_results.`);
-      addLog(`   Le tableau affiche xp_total + manual_xp_bonus, sans trigger bloquant.\n`);
+      addLog(`   Note : xp_total = computeFlooredXP (même formule que le tableau du dashboard).\n`);
 
       let studentsFixed = 0, studentsSkipped = 0;
       const studentResults = []; // pour rapport final
 
       for (const student of studentsBefore) {
         const currentSession = student.session || 1;
-        const sigmaXpDelta = xpByStudentSession[`${student.id}_${currentSession}`] ?? 0;
+        // Séries de l'élève pour la session courante, déjà triées par created_at (ORDER BY dans la requête ÉTAPE 2)
+        const studentSeries = seriesRows.filter(
+          r => r.student_id === student.id && r.session === currentSession
+        );
+        // Même calcul que loadStudents : plancher courant entre séries, pénalités des règles courantes
+        const recalibratedBaseXp = computeFlooredXP(studentSeries, xpBySeriesDisplayed);
         const manualBonus = Number(student.manual_xp_bonus) || 0;
-        const recalibratedBaseXp = Math.max(0, sigmaXpDelta);
         const displayedXpTotal = recalibratedBaseXp + manualBonus;
         const beforeXpTotal = student.xp_total;
         const displayPseudo = window.formatPseudo ? window.formatPseudo(student.pseudo) : student.pseudo;
 
         if (recalibratedBaseXp === beforeXpTotal) {
           studentsSkipped++;
-          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal: beforeXpTotal, displayed: displayedXpTotal, status: "ok" });
+          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, recalibratedBaseXp, manualBonus, afterXpTotal: beforeXpTotal, displayed: displayedXpTotal, status: "ok" });
           continue;
         }
 
         addLog(`   ${displayPseudo} S${currentSession}`);
         addLog(`     AVANT xp_total DB : ${beforeXpTotal}`);
-        addLog(`     Σ xp_delta        : ${sigmaXpDelta}`);
+        addLog(`     computeFlooredXP  : ${recalibratedBaseXp}`);
         addLog(`     bonus manuel      : ${manualBonus}`);
         addLog(`     total affiché     : ${displayedXpTotal}`);
 
@@ -650,7 +675,7 @@
           .from("students").update({ xp_total: recalibratedBaseXp }).eq("id", student.id);
         if (uErr) {
           addLog(`     ⚠️ Erreur écriture: ${uErr.message}`);
-          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal: null, displayed: displayedXpTotal, status: "error" });
+          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, recalibratedBaseXp, manualBonus, afterXpTotal: null, displayed: displayedXpTotal, status: "error" });
           continue;
         }
 
@@ -660,10 +685,10 @@
         const afterXpTotal = checkStudent?.xp_total;
         const match = afterXpTotal === recalibratedBaseXp;
         addLog(`     ÉCRIT xp_total    : ${recalibratedBaseXp}`);
-        addLog(`     LU APRÈS ÉCRITURE : ${afterXpTotal}  ${match ? "✓" : "⚠️ DIVERGENCE"}`);
+        addLog(`     LU APRÈS ÉCRITURE : ${afterXpTotal}  ${match ? "✓" : "⚠️ DIVERGENCE — trigger Supabase actif ?"}`);
         addLog(`     AFFICHÉ TABLEAU   : ${displayedXpTotal} (= xp_total + bonus manuel)`);
 
-        studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, sigmaXpDelta, manualBonus, afterXpTotal, displayed: displayedXpTotal, status: match ? "fixed" : "divergence" });
+        studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, recalibratedBaseXp, manualBonus, afterXpTotal, displayed: displayedXpTotal, status: match ? "fixed" : "divergence" });
         studentsFixed++;
       }
 
@@ -671,17 +696,17 @@
 
       // ── RAPPORT FINAL ────────────────────────────────────────────────────
       addLog("\n━━━ RAPPORT FINAL ━━━");
-      addLog("Pseudo         | Session | xp_total avant | Σ xp_delta | bonus | xp_total après | Affiché");
+      addLog("Pseudo         | Session | xp_total avant | Floored XP | bonus | xp_total après | Affiché");
       addLog("───────────────|─────────|────────────────|────────────|───────|────────────────|────────");
       studentResults.forEach(r => {
         const line = [
           r.pseudo.padEnd(14),
           ("S" + r.session).padEnd(7),
           String(r.beforeXpTotal ?? "?").padEnd(14),
-          String(r.sigmaXpDelta).padEnd(10),
+          String(r.recalibratedBaseXp).padEnd(10),
           String(r.manualBonus ?? 0).padEnd(5),
           String(r.afterXpTotal ?? "err").padEnd(14),
-          String(r.displayed ?? r.sigmaXpDelta) + (r.status === "ok" ? " (inchangé)" : r.status === "fixed" ? " ✅" : " ⚠️")
+          String(r.displayed ?? r.recalibratedBaseXp) + (r.status === "ok" ? " (inchangé)" : r.status === "fixed" ? " ✅" : " ⚠️")
         ].join(" | ");
         addLog(line);
       });
@@ -689,7 +714,7 @@
       // ── RECHARGEMENT DU TABLEAU ──────────────────────────────────────────
       addLog("\n⏳ Rechargement du tableau…");
       await loadStudents();
-      addLog("✅ Tableau rechargé. Les XP affichés = Σ xp_delta + bonus manuel.");
+      addLog("✅ Tableau rechargé. Les XP affichés = computeFlooredXP + bonus manuel.");
       addLog("   Si les valeurs n'ont pas changé, c'est que le tableau était déjà correct.");
       btn.textContent = "✅ Terminé — tableau rechargé";
     } catch(e) {
@@ -821,22 +846,26 @@
     const [qData, { data: seriesData, error: seriesError }] = await Promise.all([
       fetchAllQR(() =>
         supabaseClient.from("question_results")
-          .select("student_id, session, series_id, xp_delta")  // series_id nécessaire pour computeFlooredXP
+          .select("student_id, session, series_id, xp_delta, category, is_correct, user_answer")  // series_id nécessaire pour computeFlooredXP
           .in("student_id", studentIds)
       ),
       supabaseClient.from("series_results")
-        .select("id, student_id, session, created_at")
+        .select("id, student_id, session, level, created_at")
         .in("student_id", studentIds)
         .order("created_at", { ascending: true })              // ordre chrono obligatoire pour le plancher
     ]);
 
     if (seriesError) console.error("Erreur series_results:", seriesError);
 
-    // XP net par série depuis question_results (source de vérité)
+    // XP net affiché par série depuis question_results, avec pénalités lues dans LEVELS.
     const xpBySeriesId = {};
+    const levelBySeriesIdForTable = {};
+    (seriesData || []).forEach(series => {
+      if (series.id != null) levelBySeriesIdForTable[series.id] = series.level;
+    });
     qData.forEach(q => {
       if (q.series_id != null)
-        xpBySeriesId[q.series_id] = (xpBySeriesId[q.series_id] || 0) + (Number(q.xp_delta) || 0);
+        xpBySeriesId[q.series_id] = (xpBySeriesId[q.series_id] || 0) + getDisplayedQuestionXpDelta(q, levelBySeriesIdForTable[q.series_id]);
     });
 
     // XP total avec plancher à 0 appliqué après chaque série (running floor)
@@ -963,7 +992,7 @@
     const questionData = seriesIds.length > 0
       ? await fetchAllQR(() =>
           supabaseClient.from("question_results")
-            .select("xp_delta, series_id, category, subcategory, is_correct, response_time")
+            .select("xp_delta, series_id, category, subcategory, is_correct, response_time, user_answer")
             .in("series_id", seriesIds)
         )
       : [];
@@ -975,9 +1004,13 @@
     const correctBySeries   = {};
     const wrongBySeries     = {};
     const seriesWithPenalty = new Set();
+    const levelBySeriesId = {};
+    data.forEach(series => {
+      if (series.id != null) levelBySeriesId[series.id] = series.level;
+    });
     questionData.forEach(q => {
-      const delta = Number(q.xp_delta) || 0;
       if (q.series_id == null) return;
+      const delta = getDisplayedQuestionXpDelta(q, levelBySeriesId[q.series_id]);
       xpBySeriesId[q.series_id] = (xpBySeriesId[q.series_id] || 0) + delta;
       if (q.category === "refresh_penalty") { seriesWithPenalty.add(q.series_id); return; }
       correctBySeries[q.series_id] = (correctBySeries[q.series_id] || 0) + (q.is_correct ? 1 : 0);
@@ -1312,7 +1345,7 @@
       tr.style.cursor = "pointer";
       tr.title = "Cliquer pour voir le détail question par question";
 
-      // XP net — source de vérité : question_results.xp_delta
+      // XP net affiché — pénalités de réponse alignées sur LEVELS.
       const xpVal = series.id != null && xpBySeriesId[series.id] != null ? xpBySeriesId[series.id] : null;
       const xpColor = xpVal == null ? "#64748b" : xpVal > 0 ? "#22c55e" : xpVal < 0 ? "#ef4444" : "";
       const xpDisplay = xpVal == null ? "—" : xpVal > 0 ? "+" + xpVal : xpVal;
@@ -1692,7 +1725,7 @@
     const questionRows = questions.filter(q => q.category !== "refresh_penalty");
     const total = questionRows.length;
     const correct = questionRows.filter(q => q.is_correct).length;
-    const xpQuestions = questionRows.reduce((s, q) => s + (Number(q.xp_delta) || 0), 0);
+    const xpQuestions = questionRows.reduce((s, q) => s + getDisplayedQuestionXpDelta(q, series.level), 0);
     const xpPenalty = penaltyRows.reduce((s, q) => s + (Number(q.xp_delta) || 0), 0);
     const xpTotal = xpQuestions + xpPenalty;
     const times = questionRows.map(q => q.response_time).filter(t => t != null);
@@ -1815,7 +1848,7 @@
       const catLabel = CAT_LABELS[q.category] || q.category || "—";
 
       // XP par question
-      const qXp = q.xp_delta != null ? q.xp_delta : null;
+      const qXp = q.xp_delta != null ? getDisplayedQuestionXpDelta(q, series.level) : null;
       const qXpColor = qXp == null ? "#64748b" : qXp > 0 ? "#22c55e" : qXp < 0 ? "#ef4444" : "#94a3b8";
       const qXpDisplay = qXp == null ? "—" : qXp > 0 ? "+" + qXp : String(qXp);
 

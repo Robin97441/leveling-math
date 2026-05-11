@@ -276,60 +276,8 @@ body::after {
   .hero { padding: 20px 14px 16px; }
 }
 
-/* ── Cursor trailing light (desktop uniquement) ──────────────────────── */
-#cursor-trail {
-  position: fixed; inset: 0;
-  pointer-events: none;
-  z-index: 9998;
-}
-.cursor-trail__dot {
-  position: fixed;
-  left: 0; top: 0;
-  width: 10px; height: 10px;
-  margin-left: -5px; margin-top: -5px;
-  border-radius: 50%;
-  background: radial-gradient(circle,
-    rgba(210,235,255,.95) 0%,
-    rgba(140,195,255,.55) 45%,
-    rgba(96,165,250,0) 80%);
-  filter: blur(1.5px);
-  opacity: 0;
-  pointer-events: none;
-  mix-blend-mode: screen;
-  will-change: transform, opacity;
-  transform: translate3d(-9999px, -9999px, 0);
-}
-@media (hover: none), (prefers-reduced-motion: reduce) {
-  #cursor-trail { display: none; }
-}
-
-/* ── Curseur custom (desktop uniquement) ─────────────────────────────── */
-#cursor-dot {
-  position: fixed;
-  left: 0; top: 0;
-  width: 18px; height: 18px;
-  margin-left: -9px; margin-top: -9px;
-  border-radius: 50%;
-  border: 1px solid rgba(180,215,255,.65);
-  background: radial-gradient(circle,
-    rgba(220,235,255,.85) 0%,
-    rgba(150,195,255,.35) 40%,
-    transparent 65%);
-  box-shadow: 0 0 8px rgba(130,185,255,.45);
-  pointer-events: none;
-  z-index: 10001;
-  opacity: 0;
-  transform: translate3d(-9999px, -9999px, 0);
-  will-change: transform, opacity;
-  transition: opacity .25s ease;
-}
-#cursor-dot.active { opacity: 1; }
-@media (hover: hover) and (pointer: fine) {
-  * { cursor: none !important; }
-}
-@media (hover: none), (prefers-reduced-motion: reduce) {
-  #cursor-dot { display: none; }
-}
+/* Curseur natif forcé: évite la disparition du pointeur sur Windows. */
+html, body, * { cursor: auto !important; }
 </style>
 </head>
 <body>
@@ -392,6 +340,7 @@ body::after {
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config/levels.js"></script>
 <script src="js/supabase/client.js"></script>
 <script src="js/supabase/students.js"></script>
 <script>
@@ -597,6 +546,22 @@ body::after {
     refresh_penalty:  null,               // ignoré (pénalité refresh)
   };
 
+  function getLevelRules(level) {
+    return (typeof LEVELS === "object" && LEVELS && LEVELS[level]) ? LEVELS[level] : null;
+  }
+
+  function getDisplayedQuestionXpDelta(question, level) {
+    const rawDelta = Number(question?.xp_delta) || 0;
+    if (!question || question.category === "refresh_penalty" || question.is_correct) return rawDelta;
+
+    const rules = getLevelRules(level);
+    if (!rules) return rawDelta;
+
+    const isTimeout = question.user_answer === "";
+    const penalty = Number(isTimeout ? rules.timeout : rules.wrong) || 0;
+    return penalty > 0 ? -penalty : 0;
+  }
+
   // ── Chargement Supabase ──────────────────────────────────────────────────
   async function loadCategoryStats() {
     if (!currentStudent) await loadStudentContext();
@@ -728,16 +693,19 @@ body::after {
 
     if (!series || series.length === 0) return;
 
-    // XP net réel par série depuis question_results (inclut les pénalités)
-    // On reconstruit le Σ xp_delta pour chaque série connue
+    // XP net affiché par série depuis question_results, avec pénalités lues dans LEVELS.
     const { data: allDeltas } = await _qClient.from("question_results")
-      .select("series_id, xp_delta")
+      .select("series_id, xp_delta, category, is_correct, user_answer")
       .in("series_id", series.map(s => s.id));
 
     const xpBySeries = {};
+    const levelBySeriesId = {};
+    series.forEach(s => {
+      if (s.id != null) levelBySeriesId[s.id] = s.level;
+    });
     (allDeltas || []).forEach(q => {
       if (q.series_id != null)
-        xpBySeries[q.series_id] = (xpBySeries[q.series_id] || 0) + (Number(q.xp_delta) || 0);
+        xpBySeries[q.series_id] = (xpBySeries[q.series_id] || 0) + getDisplayedQuestionXpDelta(q, levelBySeriesId[q.series_id]);
     });
 
     // Séries ayant une pénalité refresh
@@ -779,9 +747,5 @@ body::after {
   initStatsPage().catch(e => console.error("[stats] ❌ initStatsPage:", e));
 </script>
 
-<div id="cursor-trail" aria-hidden="true"></div>
-<div id="cursor-dot" aria-hidden="true"></div>
-<script src="js/app/cursor-trail.js"></script>
-<script src="js/app/cursor-dot.js"></script>
 </body>
 </html>
