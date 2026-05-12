@@ -82,6 +82,18 @@ async function saveQuestionResult(
       }
     }
 
+    console.log("[diag] submit_answer attempt", {
+      browser: navigator.userAgent.substring(0, 100),
+      online: navigator.onLine,
+      student_id: student.id,
+      series_id: activeSeriesId,
+      session_id: activeSessionForQuiz,
+      table: "question_results (via RPC submit_answer)",
+      category,
+      subcategory,
+      answer_kind: answerKind,
+      is_correct: isCorrect
+    });
     const { data, error } = await _qClient.rpc("submit_answer", {
       p_student_id: student.id,
       p_series_id: activeSeriesId,
@@ -97,7 +109,17 @@ async function saveQuestionResult(
       p_answer_kind: answerKind
     });
     if (error) {
-      console.error("❌ saveQuestionResult RPC submit_answer:", error);
+      console.error("❌ saveQuestionResult RPC submit_answer failed", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        browser: navigator.userAgent.substring(0, 100),
+        online: navigator.onLine,
+        student_id: student.id,
+        series_id: activeSeriesId,
+        session_id: activeSessionForQuiz
+      });
       return false;
     }
     activeSeriesId = data?.series_id || activeSeriesId;

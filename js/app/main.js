@@ -20,6 +20,10 @@ let _refreshPenaltyPending = false; // true entre la reprise (startQuiz) et la p
 let isSubmitting = false;           // verrou très court contre le double clic.
 let pendingSupabaseSaves = 0;       // sauvegardes submit_answer en arrière-plan.
 let backgroundSaveChain = Promise.resolve(); // garantit l'ordre des RPC submit_answer.
+let _offlineQueue = [];             // [{args, seriesId, sessionId}] — saves en attente de connexion.
+let _retryTimerId = null;
+let _retryInProgress = false;
+let _syncBannerTimeout = null;
 let isStartingQuiz = false;
 let countdownTimeouts = [];
 let countdownOverlayEl = null;
@@ -1232,11 +1236,13 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
       }
 
       if (!saved) {
-        console.error("❌ Réponse non sauvegardée après retry submit_answer", {
+        console.error("❌ Réponse non sauvegardée après retry submit_answer — mise en queue", {
           rollbackSnapshot,
-          args
+          args,
+          online: navigator.onLine,
+          queueLength: _offlineQueue.length + 1
         });
-        alert("La sauvegarde Supabase de ta dernière réponse a échoué. Ta progression va être resynchronisée.");
+        _enqueueOfflineSave(args);
         syncXpFromServerQuietly("submit_answer_failed");
         return false;
       }
@@ -1244,8 +1250,11 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
       console.log("[progress] réponse sauvegardée en arrière-plan");
       return true;
     } catch(e) {
-      console.error("❌ Exception sauvegarde réponse en arrière-plan:", e);
-      alert("Erreur de sauvegarde Supabase. Ta progression va être resynchronisée.");
+      console.error("❌ Exception sauvegarde réponse en arrière-plan — mise en queue:", e, {
+        online: navigator.onLine,
+        queueLength: _offlineQueue.length + 1
+      });
+      _enqueueOfflineSave(args);
       syncXpFromServerQuietly("submit_answer_exception");
       return false;
     } finally {
@@ -1258,8 +1267,93 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
   return backgroundSaveChain;
 }
 
+// ── Toast synchronisation réseau ────────────────────────────────────────────
+function showSyncBanner(state) {
+  const el = document.getElementById("sync-status-toast");
+  if (!el) return;
+  clearTimeout(_syncBannerTimeout);
+  if (state === "pending") {
+    el.className = "sync-pending";
+    el.textContent = "⏳ Sauvegarde en attente…";
+  } else if (state === "synced") {
+    el.className = "sync-synced";
+    el.textContent = "✅ Progression resynchronisée";
+    _syncBannerTimeout = setTimeout(() => { el.className = "sync-hidden"; }, 2500);
+  } else {
+    el.className = "sync-hidden";
+  }
+}
+
+// ── Queue de sauvegardes offline + retry ────────────────────────────────────
+function _enqueueOfflineSave(args) {
+  _offlineQueue.push({ args, seriesId: activeSeriesId, sessionId: activeSessionForQuiz });
+  showSyncBanner("pending");
+  if (!_retryTimerId) {
+    _retryTimerId = setInterval(_flushOfflineQueue, 8000);
+  }
+  console.log("[offline-queue] enqueued", { queueLength: _offlineQueue.length, online: navigator.onLine });
+}
+
+async function _flushOfflineQueue() {
+  if (_retryInProgress || _offlineQueue.length === 0) return;
+  _retryInProgress = true;
+  const savedSeriesId = activeSeriesId;
+  const savedSession  = activeSessionForQuiz;
+  console.log("[offline-queue] flush start", { queueLength: _offlineQueue.length, online: navigator.onLine });
+  try {
+    while (_offlineQueue.length > 0) {
+      const item = _offlineQueue[0];
+      activeSeriesId       = item.seriesId;
+      activeSessionForQuiz = item.sessionId;
+      pendingSupabaseSaves++;
+      let saved = false;
+      try {
+        saved = await saveQuestionResult(...item.args);
+        if (!saved) {
+          await new Promise(r => setTimeout(r, 1500));
+          saved = await saveQuestionResult(...item.args);
+        }
+      } finally {
+        pendingSupabaseSaves = Math.max(0, pendingSupabaseSaves - 1);
+      }
+      if (!saved) {
+        console.warn("[offline-queue] retry échoué — toujours hors-ligne", { remaining: _offlineQueue.length });
+        break;
+      }
+      // Propager le series_id assigné par le RPC aux items suivants de la même série
+      const assignedId = activeSeriesId;
+      const prevId     = item.seriesId;
+      _offlineQueue.shift();
+      if (prevId !== assignedId) {
+        _offlineQueue.forEach(q => { if (q.seriesId === prevId) q.seriesId = assignedId; });
+      }
+      console.log("[offline-queue] item synchronized", { remaining: _offlineQueue.length });
+    }
+    if (_offlineQueue.length === 0) {
+      clearInterval(_retryTimerId);
+      _retryTimerId = null;
+      showSyncBanner("synced");
+      console.log("[offline-queue] flush complete — tout synchronisé");
+    }
+  } catch (e) {
+    console.error("[offline-queue] flush exception:", e);
+  } finally {
+    activeSeriesId       = savedSeriesId;
+    activeSessionForQuiz = savedSession;
+    _retryInProgress = false;
+  }
+}
+
+window.addEventListener("online",  () => {
+  console.log("[offline-queue] connexion rétablie — online:", navigator.onLine, "queue:", _offlineQueue.length);
+  if (_offlineQueue.length > 0) _flushOfflineQueue();
+});
+window.addEventListener("offline", () => {
+  console.log("[offline-queue] connexion perdue — offline");
+});
+
 window.addEventListener("beforeunload", (event) => {
-  if (pendingSupabaseSaves > 0) {
+  if (pendingSupabaseSaves > 0 || _offlineQueue.length > 0) {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -1855,13 +1949,17 @@ async function startQuiz({ forceNew = false } = {}){
         activeSeriesId
       });
     } else {
-      console.error("❌ Impossible de récupérer/créer le student — série non démarrée");
-      showLoadingState("Impossible de charger ta progression. Vérifie ta connexion.", true);
+      console.error("❌ Impossible de récupérer/créer le student — série non démarrée", {
+        online: navigator.onLine,
+        pseudo,
+        browser: navigator.userAgent.substring(0, 80)
+      });
+      showLoadingState("Connexion requise pour lancer une nouvelle série.", true);
       return;
     }
   } else {
     console.error("❌ startQuiz annulé — window.saveStudent indisponible");
-    showLoadingState("Impossible de charger ta progression. Vérifie ta connexion.", true);
+    showLoadingState("Connexion requise pour lancer une nouvelle série.", true);
     return;
   }
 
