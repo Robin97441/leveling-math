@@ -1199,6 +1199,166 @@ function applyXp(delta){
   }
 }
 
+function getDisplayedQuestionXpDelta(question, level) {
+  const rawDelta = Number(question?.xp_delta) || 0;
+  if (!question || question.category === "refresh_penalty" || question.is_correct) return rawDelta;
+
+  const rules = (typeof LEVELS === "object" && LEVELS && LEVELS[level]) ? LEVELS[level] : null;
+  if (!rules) return rawDelta;
+
+  const isTimeout = question.user_answer === "";
+  const penalty = Number(isTimeout ? rules.timeout : rules.wrong) || 0;
+  return penalty > 0 ? -penalty : 0;
+}
+
+function computeFlooredXP(seriesOrdered, xpBySeriesId) {
+  let total = 0;
+  for (const series of seriesOrdered || []) {
+    const seriesXP = xpBySeriesId[series.id] ?? 0;
+    total = Math.max(0, total + seriesXP);
+  }
+  return total;
+}
+
+async function fetchAllQuestionResults(buildQuery) {
+  const BATCH = 1000;
+  let from = 0;
+  let all = [];
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + BATCH - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if ((data || []).length < BATCH) break;
+    from += BATCH;
+  }
+  return all;
+}
+
+async function recalculateStudentXpFromResults(student, { updateUi = false, reason = "sync" } = {}) {
+  if (!student?.id || typeof _qClient === "undefined") return null;
+
+  const session = student.session || localSession || activeSessionForQuiz || 1;
+  const { data: seriesRows, error: seriesError } = await _qClient
+    .from("series_results")
+    .select("id, xp_gained, student_id, session, level, created_at")
+    .eq("student_id", student.id)
+    .eq("session", session)
+    .order("created_at", { ascending: true });
+
+  if (seriesError) throw seriesError;
+
+  const seriesIds = (seriesRows || []).map(s => s.id).filter(Boolean);
+  const questionRows = seriesIds.length > 0
+    ? await fetchAllQuestionResults(() =>
+        _qClient.from("question_results")
+          .select("series_id, xp_delta, category, is_correct, user_answer")
+          .in("series_id", seriesIds)
+      )
+    : [];
+
+  const levelBySeriesId = {};
+  (seriesRows || []).forEach(series => {
+    if (series.id != null) levelBySeriesId[series.id] = series.level;
+  });
+
+  const xpBySeriesDisplayed = {};
+  questionRows.forEach(question => {
+    if (question.series_id == null) return;
+    xpBySeriesDisplayed[question.series_id] = (xpBySeriesDisplayed[question.series_id] || 0)
+      + getDisplayedQuestionXpDelta(question, levelBySeriesId[question.series_id]);
+  });
+
+  for (const series of (seriesRows || [])) {
+    const displayedSeriesXp = xpBySeriesDisplayed[series.id] ?? 0;
+    if (displayedSeriesXp !== series.xp_gained) {
+      const { error } = await _qClient
+        .from("series_results")
+        .update({ xp_gained: displayedSeriesXp })
+        .eq("id", series.id);
+      if (error) console.warn("[xp-recalc] series_results.xp_gained non mis à jour", { series_id: series.id, error });
+    }
+  }
+
+  const recalibratedBaseXp = computeFlooredXP(seriesRows || [], xpBySeriesDisplayed);
+  const manualXpBonus = Number(student.manual_xp_bonus) || 0;
+  let updatedStudent = {
+    xp_total: Number(student.xp_total) || 0,
+    manual_xp_bonus: manualXpBonus,
+    best_score: student.best_score,
+    best_avg_time: student.best_avg_time,
+    games_played: student.games_played,
+    session
+  };
+
+  if (recalibratedBaseXp !== (Number(student.xp_total) || 0)) {
+    const { data, error: updateError } = await _qClient
+      .from("students")
+      .update({ xp_total: recalibratedBaseXp, updated_at: new Date().toISOString() })
+      .eq("id", student.id)
+      .select("xp_total, manual_xp_bonus, best_score, best_avg_time, games_played, session")
+      .single();
+
+    if (updateError) throw updateError;
+    updatedStudent = data;
+  }
+
+  const displayXp = recalibratedBaseXp + manualXpBonus;
+  console.log("[xp-recalc] XP recalculé depuis question_results", {
+    reason,
+    student_id: student.id,
+    session,
+    xp_before: student.xp_total,
+    xp_total: recalibratedBaseXp,
+    manual_xp_bonus: manualXpBonus,
+    xp_displayed: displayXp,
+    series_count: (seriesRows || []).length,
+    question_count: questionRows.length
+  });
+
+  if (updateUi) {
+    const previousLocalXp = Number(xp) || 0;
+    xp = displayXp;
+    bestScore = Number(updatedStudent.best_score) || bestScore || 0;
+    statBestAvgTime = updatedStudent.best_avg_time || statBestAvgTime || null;
+    statGames = Number(updatedStudent.games_played) || statGames || 0;
+    localSession = updatedStudent.session || session;
+    localStorage.setItem(getSessionStorageKey(), String(localSession));
+    updateRankUI();
+    updateLevelButtons();
+    saveGame();
+    if (
+      typeof rankIndexFromXp === "function" &&
+      typeof showRankOverlay === "function" &&
+      typeof RANKS !== "undefined"
+    ) {
+      const previousIndex = rankIndexFromXp(previousLocalXp);
+      const nextIndex = rankIndexFromXp(displayXp);
+      if (nextIndex > previousIndex) {
+        playRankUpSound();
+        showRankOverlay(RANKS[nextIndex], false);
+      } else if (nextIndex < previousIndex) {
+        playRankDownSound();
+        showRankOverlay(RANKS[nextIndex], true);
+      }
+    }
+  }
+
+  return {
+    ...student,
+    ...updatedStudent,
+    xp_total: recalibratedBaseXp,
+    manual_xp_bonus: manualXpBonus,
+    session
+  };
+}
+
+async function recalibrateCurrentStudentXp(reason = "manual") {
+  if (!pseudo || typeof window.saveStudent !== "function") return null;
+  const student = await window.saveStudent(pseudo);
+  if (!student) return null;
+  return recalculateStudentXpFromResults(student, { updateUi: true, reason });
+}
+
 function syncXpFromServerQuietly(reason = "background") {
   if (typeof _qClient === "undefined" || typeof syncStudentFromSupabase !== "function") return;
   _qClient.auth.getUser()
@@ -1333,6 +1493,8 @@ async function _flushOfflineQueue() {
       clearInterval(_retryTimerId);
       _retryTimerId = null;
       showSyncBanner("synced");
+      recalibrateCurrentStudentXp("offline_flush")
+        .catch(e => console.error("[xp-recalc] recalcul XP après resync offline échoué:", e));
       console.log("[offline-queue] flush complete — tout synchronisé");
     }
   } catch (e) {
@@ -1859,12 +2021,15 @@ function endQuiz(){
   showPenaltyBanner(false); // s'assurer que le banner est caché en fin de série
   setQuestionLock(true);
   
-  // Les réponses ont déjà été enregistrées via la RPC submit_answer().
-  // Les agrégats series_results/students sont recalculés côté Supabase.
+  // Les réponses sont enregistrées via submit_answer ; l'XP final est recalculé
+  // après le flush avec la même formule que le dashboard.
   if (!hasSavedSeries && pseudo) {
     hasSavedSeries = true;
     console.log("📤 Série finalisée localement — agrégats serveur gérés par submit_answer(), id:", activeSeriesId);
   }
+  backgroundSaveChain
+    .then(() => recalibrateCurrentStudentXp("end_quiz"))
+    .catch(e => console.error("[xp-recalc] recalcul XP fin de série échoué:", e));
 }
 async function startQuiz({ forceNew = false } = {}){
   showLoadingState("Chargement de ta progression...");
@@ -2204,7 +2369,7 @@ async function syncStudentFromSupabase(authUser = null) {
       return;
     }
 
-    const student = await window.saveStudent(pseudoToUse);
+    let student = await window.saveStudent(pseudoToUse);
     if (!student) {
       console.error("[sync] ❌ Aucun student Supabase récupéré/créé — hydratation impossible");
       return;
@@ -2243,6 +2408,13 @@ async function syncStudentFromSupabase(authUser = null) {
       unlockPseudo();
       return;
     }
+
+    // ── Recalibrage avant hydratation : même formule que le dashboard ───────
+    const recalibratedStudent = await recalculateStudentXpFromResults(student, {
+      updateUi: false,
+      reason: "sync_hydration"
+    });
+    if (recalibratedStudent) student = recalibratedStudent;
 
     // ── Hydratation de l'état élève depuis Supabase (source de vérité) ───────
     console.log("[SYNC] hydration success");
