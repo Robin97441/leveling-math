@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Espace parent — Leveling Math</title>
+<style>
+:root {
+  --bg1: #071225; --bg2: #0d1e3c;
+  --text: #f8fafc; --muted: #cbd5e1;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { min-height: 100%; background: var(--bg1); }
+body {
+  min-height: 100vh; min-height: 100dvh;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(ellipse 38% 55% at 92% 42%, rgba(167,139,250,.07) 0%, transparent 70%),
+    radial-gradient(ellipse 28% 35% at 88% 18%, rgba(96,165,250,.09) 0%, transparent 65%),
+    linear-gradient(135deg, var(--bg1), var(--bg2));
+  display: flex;
+  justify-content: center;
+  padding: max(24px, env(safe-area-inset-top)) 14px max(24px, env(safe-area-inset-bottom));
+}
+.app { width: min(920px, 100%); }
+.hero { padding: 28px 18px 22px; text-align: center; }
+.hero h1 { font-size: clamp(28px, 6vw, 48px); font-weight: 900; line-height: 1.05; }
+.hero h1 span { color: #93c5fd; text-shadow: 0 0 18px rgba(96,165,250,.55); }
+.hero p { margin: 10px auto 0; max-width: 640px; color: var(--muted); font-size: 15px; line-height: 1.5; }
+.content { display: flex; flex-direction: column; gap: 18px; }
+.section {
+  background: rgba(10,20,50,.45);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(96,165,250,.18);
+  border-radius: 20px;
+  padding: 22px 20px;
+  box-shadow: 0 0 28px rgba(96,165,250,.08), 0 2px 40px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.07);
+}
+.section-title {
+  font-size: 13px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .07em; color: #93c5fd; margin-bottom: 16px;
+}
+.hidden { display: none !important; }
+.auth-card { width: min(460px, 100%); margin: 0 auto; }
+.auth-tabs {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
+}
+.auth-tab {
+  border: 1px solid rgba(96,165,250,.22); border-radius: 12px;
+  background: rgba(96,165,250,.10); color: #dbeafe;
+  padding: 10px 12px; font-weight: 900; cursor: pointer;
+}
+.auth-tab.active { background: linear-gradient(135deg,#3b82f6,#2563eb); color: white; }
+.auth-form { display: grid; gap: 12px; }
+.auth-field { display: grid; gap: 6px; color: #bfdbfe; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.auth-field input {
+  width: 100%; border: 1px solid rgba(96,165,250,.22); border-radius: 12px;
+  background: #f8fafc; color: #0f172a; padding: 12px 13px; font-size: 15px;
+}
+.btn {
+  border: 1px solid rgba(96,165,250,.26); border-radius: 12px;
+  background: linear-gradient(135deg,#3b82f6,#2563eb);
+  color: white; padding: 11px 16px; font-weight: 900; cursor: pointer;
+}
+.btn.secondary { background: rgba(96,165,250,.12); color: #dbeafe; }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.message { color: var(--muted); line-height: 1.5; }
+.message.error { color: #fca5a5; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.parent-email { color: var(--muted); font-size: 13px; }
+.child-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.child-tab {
+  border: 1px solid rgba(96,165,250,.22); border-radius: 999px;
+  background: rgba(96,165,250,.10); color: #dbeafe;
+  padding: 8px 13px; font-weight: 900; cursor: pointer;
+}
+.child-tab.active { background: linear-gradient(135deg,#3b82f6,#2563eb); color: white; }
+.student-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.student-name { font-size: 24px; font-weight: 900; }
+.rank-pill {
+  display: inline-flex; align-items: center; gap: 7px; margin-top: 8px;
+  padding: 7px 12px; border-radius: 999px; background: rgba(96,165,250,.12);
+  border: 1px solid rgba(96,165,250,.18); font-size: 13px; font-weight: 900;
+}
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 18px; }
+.stat-card {
+  background: rgba(5,12,40,.60); border: 1px solid rgba(96,165,250,.16);
+  border-radius: 16px; padding: 16px 14px; text-align: center;
+}
+.stat-card .label { color: var(--muted); font-size: 12px; margin-bottom: 7px; }
+.stat-card .value { font-weight: 900; font-size: 25px; line-height: 1.1; }
+.series-list { display: flex; flex-direction: column; gap: 8px; }
+.series-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 16px; background: rgba(5,12,40,.50);
+  border: 1px solid rgba(96,165,250,.12); border-radius: 14px;
+  font-size: 13px; cursor: pointer; transition: border-color .2s, background .2s;
+}
+.series-row:hover { border-color: rgba(96,165,250,.28); background: rgba(8,18,52,.68); }
+.series-row:focus-visible, .child-tab:focus-visible, .auth-tab:focus-visible, .btn:focus-visible {
+  outline: 2px solid #93c5fd; outline-offset: 2px;
+}
+.sr-level {
+  font-weight: 900; padding: 4px 10px; border-radius: 9px;
+  background: rgba(96,165,250,.15); border: 1px solid rgba(96,165,250,.20);
+}
+.sr-muted { color: var(--muted); }
+.sr-xp { font-weight: 900; color: #4ade80; }
+.sr-date { color: rgba(255,255,255,.42); margin-left: auto; }
+.detail {
+  margin-top: 12px; background: rgba(5,12,40,.50);
+  border: 1px solid rgba(96,165,250,.16); border-radius: 14px; overflow: hidden;
+}
+.detail-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid rgba(96,165,250,.12);
+}
+.detail-title { font-size: 13px; font-weight: 900; color: #bfdbfe; }
+.detail-body { padding: 12px; overflow-x: auto; }
+.detail-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 12px; }
+.detail-table th {
+  text-align: left; color: #93c5fd; padding: 9px 10px;
+  border-bottom: 1px solid rgba(96,165,250,.16);
+}
+.detail-table td {
+  padding: 10px; border-bottom: 1px solid rgba(255,255,255,.06);
+  color: var(--text); vertical-align: top;
+}
+.detail-table tr:last-child td { border-bottom: none; }
+.status {
+  display: inline-flex; border-radius: 999px; padding: 3px 8px;
+  font-weight: 900;
+}
+.status.correct { background: rgba(34,197,94,.15); color: #4ade80; }
+.status.wrong { background: rgba(239,68,68,.15); color: #f87171; }
+.status.timeout { background: rgba(148,163,184,.15); color: #cbd5e1; }
+@media(max-width: 640px) {
+  .section { padding: 18px 14px; }
+  .student-name { font-size: 21px; }
+  .sr-date { margin-left: 0; width: 100%; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="hero">
+    <h1>Espace <span>parent</span></h1>
+    <p>Cet espace permet de suivre les résultats et les erreurs récentes de votre enfant, en lecture seule.</p>
+  </div>
+
+  <div class="content">
+    <div id="authSection" class="section auth-card">
+      <div class="section-title">Connexion parent</div>
+      <div class="auth-tabs" role="tablist" aria-label="Accès parent">
+        <button class="auth-tab active" id="showLoginBtn" type="button">Connexion</button>
+        <button class="auth-tab" id="showSignupBtn" type="button">Créer un compte</button>
+      </div>
+      <form class="auth-form" id="parentLoginForm">
+        <label class="auth-field">Email
+          <input id="parentEmail" type="email" autocomplete="email" required>
+        </label>
+        <label class="auth-field">Mot de passe
+          <input id="parentPassword" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="btn" id="loginBtn" type="submit">Se connecter</button>
+        <div id="authMessage" class="message"></div>
+      </form>
+      <form class="auth-form hidden" id="parentSignupForm">
+        <label class="auth-field">Email
+          <input id="signupEmail" type="email" autocomplete="email" required>
+        </label>
+        <label class="auth-field">Mot de passe
+          <input id="signupPassword" type="password" autocomplete="new-password" minlength="6" required>
+        </label>
+        <label class="auth-field">Confirmer le mot de passe
+          <input id="signupPasswordConfirm" type="password" autocomplete="new-password" minlength="6" required>
+        </label>
+        <label class="auth-field">Code parent
+          <input id="parentCode" type="text" autocomplete="off" placeholder="MATH-4821" required>
+        </label>
+        <button class="btn" id="signupBtn" type="submit">Créer mon compte parent</button>
+        <div id="signupMessage" class="message"></div>
+      </form>
+    </div>
+
+    <div id="parentSection" class="hidden">
+      <div class="section topbar">
+        <div>
+          <div class="section-title" style="margin-bottom:6px">Suivi de progression</div>
+          <div class="parent-email" id="parentEmailLabel"></div>
+        </div>
+        <button class="btn secondary" type="button" id="logoutBtn">Se déconnecter</button>
+      </div>
+
+      <div id="emptySection" class="section hidden">
+        <div class="message">Aucun élève n’est associé à ce compte parent pour le moment.</div>
+      </div>
+
+      <div id="childrenSection" class="section hidden">
+        <div class="section-title">Enfants associés</div>
+        <div id="childTabs" class="child-tabs"></div>
+      </div>
+
+      <div id="studentSection" class="section hidden">
+        <div id="studentDashboard"></div>
+      </div>
+
+      <div id="seriesSection" class="section hidden">
+        <div class="section-title">Dernières séries</div>
+        <div id="seriesList" class="series-list"></div>
+        <div id="seriesDetail" class="detail hidden"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config/ranks.js"></script>
+<script src="js/supabase/client.js"></script>
+<script>
+const state = {
+  user: null,
+  children: [],
+  selectedStudent: null,
+  series: []
+};
+
+const levelLabel = {
+  beginner: "Débutant",
+  intermediate: "Intermédiaire",
+  expert: "Expert"
+};
+
+function $(id) { return document.getElementById(id); }
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  })[char]);
+}
+
+function formatPseudo(input) {
+  const value = String(input ?? "").trim();
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "Élève";
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("fr-FR", {
+    day: "2-digit", month: "2-digit", year: "2-digit",
+    hour: "2-digit", minute: "2-digit"
+  });
+}
+
+function formatTime(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? `${n.toFixed(1).replace(".", ",")} s` : "—";
+}
+
+function setMessage(id, message, isError = false) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("error", !!isError);
+}
+
+function setAuthMode(mode) {
+  const isSignup = mode === "signup";
+  $("parentLoginForm").classList.toggle("hidden", isSignup);
+  $("parentSignupForm").classList.toggle("hidden", !isSignup);
+  $("showLoginBtn").classList.toggle("active", !isSignup);
+  $("showSignupBtn").classList.toggle("active", isSignup);
+  setMessage("authMessage", "");
+  setMessage("signupMessage", "");
+}
+
+function showAuthedShell(user) {
+  $("authSection").classList.add("hidden");
+  $("parentSection").classList.remove("hidden");
+  $("parentEmailLabel").textContent = user?.email ? `Connecté avec ${user.email}` : "";
+}
+
+async function linkParentWithCode(code) {
+  const cleanCode = String(code || "").trim().toUpperCase();
+  if (!cleanCode) throw new Error("INVALID_PARENT_CODE");
+
+  const { error } = await _qClient.rpc("link_parent_with_code", { code: cleanCode });
+  if (error) throw error;
+}
+
+function showAuthShell() {
+  $("authSection").classList.remove("hidden");
+  $("parentSection").classList.add("hidden");
+  $("emptySection").classList.add("hidden");
+  $("childrenSection").classList.add("hidden");
+  $("studentSection").classList.add("hidden");
+  $("seriesSection").classList.add("hidden");
+  state.user = null;
+  state.children = [];
+  state.selectedStudent = null;
+  state.series = [];
+}
+
+async function loadParentStudents() {
+  const email = String(state.user?.email || "").trim().toLowerCase();
+  if (!email) return [];
+
+  const { data: links, error: linkError } = await _qClient
+    .from("parent_students")
+    .select("student_id")
+    .eq("parent_email", email);
+
+  if (linkError) throw linkError;
+
+  const ids = Array.from(new Set((links || []).map(row => row.student_id).filter(Boolean)));
+  if (ids.length === 0) return [];
+
+  const { data: students, error: studentError } = await _qClient
+    .from("students")
+    .select("id, pseudo, xp_total, manual_xp_bonus, best_score, best_avg_time, games_played, session")
+    .in("id", ids)
+    .order("pseudo", { ascending: true });
+
+  if (studentError) throw studentError;
+  return students || [];
+}
+
+function renderChildSelector() {
+  const tabs = $("childTabs");
+  tabs.innerHTML = "";
+  if (state.children.length <= 1) {
+    $("childrenSection").classList.add("hidden");
+    return;
+  }
+
+  $("childrenSection").classList.remove("hidden");
+  state.children.forEach(student => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "child-tab" + (state.selectedStudent?.id === student.id ? " active" : "");
+    button.textContent = formatPseudo(student.pseudo);
+    button.addEventListener("click", () => selectStudent(student.id));
+    tabs.appendChild(button);
+  });
+}
+
+function renderStudentSummary(student) {
+  const xpTotal = (Number(student.xp_total) || 0) + (Number(student.manual_xp_bonus) || 0);
+  const rank = typeof getRankFromXP === "function" ? getRankFromXP(xpTotal) : null;
+  $("studentSection").classList.remove("hidden");
+  $("studentDashboard").innerHTML = `
+    <div class="student-head">
+      <div>
+        <div class="student-name">${escapeHtml(formatPseudo(student.pseudo))}</div>
+        <div class="rank-pill" style="color:${rank?.color || "#dbeafe"}">
+          <span>${rank?.icon || "•"}</span>
+          <span>${escapeHtml(rank?.label || "Rang")}</span>
+        </div>
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">XP total</div><div class="value">${xpTotal}</div></div>
+      <div class="stat-card"><div class="label">Séries réalisées</div><div class="value">${Number(student.games_played) || 0}</div></div>
+      <div class="stat-card"><div class="label">Meilleur score</div><div class="value">${Number(student.best_score) || 0}/10</div></div>
+      <div class="stat-card"><div class="label">Meilleur temps moy.</div><div class="value">${formatTime(student.best_avg_time)}</div></div>
+    </div>
+  `;
+}
+
+async function loadSeries(student) {
+  $("seriesSection").classList.remove("hidden");
+  $("seriesList").innerHTML = `<div class="message">Chargement des dernières séries…</div>`;
+  hideSeriesDetail();
+
+  const { data, error } = await _qClient
+    .from("series_results")
+    .select("id, student_id, level, score, xp_gained, avg_time, created_at")
+    .eq("student_id", student.id)
+    .eq("session", student.session || 1)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error) throw error;
+
+  state.series = data || [];
+  renderSeriesList();
+}
+
+function renderSeriesList() {
+  const list = $("seriesList");
+  list.innerHTML = "";
+
+  if (state.series.length === 0) {
+    list.innerHTML = `<div class="message">Aucune série enregistrée pour le moment.</div>`;
+    return;
+  }
+
+  state.series.forEach(series => {
+    const row = document.createElement("div");
+    row.className = "series-row";
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", "Voir le détail de cette série");
+    const xp = series.xp_gained == null ? "—" : (Number(series.xp_gained) >= 0 ? `+${series.xp_gained}` : String(series.xp_gained));
+    row.innerHTML = `
+      <span class="sr-date">${formatDate(series.created_at)}</span>
+      <span class="sr-level">${escapeHtml(levelLabel[series.level] || series.level || "—")}</span>
+      <span class="sr-muted">Score : <strong>${series.score ?? "—"}/10</strong></span>
+      <span class="sr-xp">XP : ${escapeHtml(xp)}</span>
+      <span class="sr-muted">Temps moy. : ${formatTime(series.avg_time)}</span>
+    `;
+    row.addEventListener("click", () => showSeriesDetail(series));
+    row.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showSeriesDetail(series);
+      }
+    });
+    list.appendChild(row);
+  });
+}
+
+function getQuestionStatus(question) {
+  if (question.is_correct) return { key: "correct", label: "Juste" };
+  const emptyAnswer = question.user_answer == null || question.user_answer === "";
+  if (emptyAnswer) return { key: "timeout", label: "Timeout" };
+  return { key: "wrong", label: "Faux" };
+}
+
+function hideSeriesDetail() {
+  const detail = $("seriesDetail");
+  detail.classList.add("hidden");
+  detail.innerHTML = "";
+}
+
+function renderDetailShell(title, bodyHtml) {
+  const detail = $("seriesDetail");
+  detail.classList.remove("hidden");
+  detail.innerHTML = `
+    <div class="detail-head">
+      <div class="detail-title">${escapeHtml(title)}</div>
+      <button class="btn secondary" type="button" id="closeDetailBtn">Retour</button>
+    </div>
+    <div class="detail-body">${bodyHtml}</div>
+  `;
+  $("closeDetailBtn").addEventListener("click", hideSeriesDetail);
+  detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function showSeriesDetail(series) {
+  if (!state.selectedStudent || !series?.id) return;
+  const title = `${levelLabel[series.level] || "Série"} • ${formatDate(series.created_at)}`;
+  renderDetailShell(title, `<div class="message">Chargement du détail…</div>`);
+
+  const { data, error } = await _qClient
+    .from("question_results")
+    .select("question_text, user_answer, expected_answer, is_correct, category, created_at")
+    .eq("student_id", state.selectedStudent.id)
+    .eq("series_id", series.id)
+    .neq("category", "refresh_penalty")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("[parent] détail série impossible:", error);
+    renderDetailShell(title, `<div class="message error">Impossible de charger le détail de cette série.</div>`);
+    return;
+  }
+
+  const questions = data || [];
+  if (questions.length === 0) {
+    renderDetailShell(title, `<div class="message">Aucun détail disponible pour cette série.</div>`);
+    return;
+  }
+
+  const rows = questions.map((question, index) => {
+    const status = getQuestionStatus(question);
+    const answer = question.user_answer == null || question.user_answer === "" ? "timeout" : question.user_answer;
+    return `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(question.question_text || "—")}</td>
+        <td>${escapeHtml(answer)}</td>
+        <td>${escapeHtml(question.expected_answer || "—")}</td>
+        <td><span class="status ${status.key}">${status.label}</span></td>
+      </tr>
+    `;
+  }).join("");
+
+  renderDetailShell(title, `
+    <table class="detail-table">
+      <thead>
+        <tr><th>#</th><th>Question</th><th>Réponse élève</th><th>Bonne réponse</th><th>Statut</th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `);
+}
+
+async function selectStudent(studentId) {
+  const student = state.children.find(item => item.id === studentId);
+  if (!student) return;
+  state.selectedStudent = student;
+  renderChildSelector();
+  renderStudentSummary(student);
+  try {
+    await loadSeries(student);
+  } catch (error) {
+    console.error("[parent] séries inaccessibles:", error);
+    $("seriesList").innerHTML = `<div class="message error">Impossible de charger les séries de cet élève.</div>`;
+  }
+}
+
+async function loadParentSpace(user) {
+  state.user = user;
+  showAuthedShell(user);
+  $("emptySection").classList.add("hidden");
+  $("studentSection").classList.add("hidden");
+  $("seriesSection").classList.add("hidden");
+  $("childrenSection").classList.add("hidden");
+
+  try {
+    state.children = await loadParentStudents();
+  } catch (error) {
+    console.error("[parent] chargement associations impossible:", error);
+    $("emptySection").classList.remove("hidden");
+    $("emptySection").innerHTML = `<div class="message error">Impossible de charger les élèves associés à ce compte parent.</div>`;
+    return;
+  }
+
+  if (state.children.length === 0) {
+    $("emptySection").classList.remove("hidden");
+    return;
+  }
+
+  state.selectedStudent = state.children[0];
+  renderChildSelector();
+  await selectStudent(state.selectedStudent.id);
+}
+
+$("parentLoginForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const email = $("parentEmail").value.trim();
+  const password = $("parentPassword").value;
+  $("loginBtn").disabled = true;
+  setMessage("authMessage", "Connexion en cours…");
+  try {
+    const { data, error } = await _qClient.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    setMessage("authMessage", "");
+    await loadParentSpace(data.user);
+  } catch (error) {
+    console.error("[parent] connexion impossible:", error);
+    setMessage("authMessage", "Connexion impossible. Vérifiez l’email et le mot de passe.", true);
+  } finally {
+    $("loginBtn").disabled = false;
+  }
+});
+
+$("parentSignupForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const email = $("signupEmail").value.trim().toLowerCase();
+  const password = $("signupPassword").value;
+  const confirmPassword = $("signupPasswordConfirm").value;
+  const code = $("parentCode").value.trim().toUpperCase();
+  $("signupBtn").disabled = true;
+  setMessage("signupMessage", "Vérification du code parent…");
+
+  try {
+    if (!password || !confirmPassword || password !== confirmPassword) {
+      setMessage("signupMessage", "Les mots de passe ne correspondent pas.", true);
+      return;
+    }
+
+    if (!code) {
+      setMessage("signupMessage", "Code parent invalide. Vérifiez le code fourni par l’enseignant.", true);
+      return;
+    }
+
+    setMessage("signupMessage", "Création du compte parent…");
+    const { data: signupData, error: signupError } = await _qClient.auth.signUp({
+      email,
+      password
+    });
+
+    if (signupError) {
+      const msg = String(signupError.message || "").toLowerCase();
+      if (msg.includes("already") || msg.includes("registered") || msg.includes("exists")) {
+        setAuthMode("login");
+        $("parentEmail").value = email;
+        setMessage("authMessage", "Un compte existe déjà avec cet email. Connectez-vous pour continuer.", true);
+        return;
+      }
+      throw signupError;
+    }
+
+    if (signupData?.user && Array.isArray(signupData.user.identities) && signupData.user.identities.length === 0) {
+      setAuthMode("login");
+      $("parentEmail").value = email;
+      setMessage("authMessage", "Un compte existe déjà avec cet email. Connectez-vous pour continuer.", true);
+      return;
+    }
+
+    let user = signupData?.session?.user || signupData?.user || null;
+    if (!signupData?.session) {
+      const { data: loginData, error: loginError } = await _qClient.auth.signInWithPassword({ email, password });
+      if (loginError) {
+        setAuthMode("login");
+        $("parentEmail").value = email;
+        setMessage("authMessage", "Compte créé. Vérifiez votre email si une confirmation est demandée, puis connectez-vous.");
+        return;
+      }
+      user = loginData.user;
+    }
+
+    setMessage("signupMessage", "Association à l’élève…");
+    await linkParentWithCode(code);
+    setMessage("signupMessage", "");
+    await loadParentSpace(user);
+  } catch (error) {
+    console.error("[parent] création compte impossible:", error);
+    const msg = String(error?.message || "").toLowerCase();
+    if (error?.message === "INVALID_PARENT_CODE" || msg.includes("invalid") || msg.includes("code")) {
+      setMessage("signupMessage", "Code parent invalide. Vérifiez le code fourni par l’enseignant.", true);
+    } else {
+      setMessage("signupMessage", "Création impossible pour le moment. Vérifiez les informations saisies.", true);
+    }
+  } finally {
+    $("signupBtn").disabled = false;
+  }
+});
+
+$("logoutBtn").addEventListener("click", async () => {
+  await _qClient.auth.signOut();
+  showAuthShell();
+});
+
+$("showLoginBtn").addEventListener("click", () => setAuthMode("login"));
+$("showSignupBtn").addEventListener("click", () => setAuthMode("signup"));
+
+(async function initParentPage() {
+  try {
+    const { data } = await _qClient.auth.getSession();
+    if (data?.session?.user) {
+      await loadParentSpace(data.session.user);
+    } else {
+      showAuthShell();
+    }
+  } catch (error) {
+    console.error("[parent] init impossible:", error);
+    showAuthShell();
+    setMessage("authMessage", "Impossible d’initialiser l’espace parent.", true);
+  }
+})();
+</script>
+</body>
+</html>

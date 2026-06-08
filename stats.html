@@ -217,8 +217,9 @@ body::after {
   font-size: 13px;
   flex-wrap: wrap;
   transition: border-color .2s;
+  cursor: pointer;
 }
-.series-row:hover { border-color: rgba(96,165,250,.28); }
+.series-row:hover { border-color: rgba(96,165,250,.28); background: rgba(8,18,52,.68); }
 .series-row .sr-level {
   font-weight: 800;
   font-size: 13px;
@@ -242,6 +243,57 @@ body::after {
   font-size: 12px;
   font-weight: 700;
 }
+.series-detail {
+  margin-top: 12px;
+  background: rgba(5,12,40,.50);
+  border: 1px solid rgba(96,165,250,.16);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.series-detail.hidden { display: none; }
+.series-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(96,165,250,.12);
+}
+.series-detail-title { font-size: 13px; font-weight: 900; color: #bfdbfe; }
+.series-detail-close {
+  border: 1px solid rgba(96,165,250,.24);
+  border-radius: 10px;
+  background: rgba(96,165,250,.12);
+  color: #dbeafe;
+  padding: 7px 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.series-detail-body { padding: 12px; overflow-x: auto; }
+.series-detail-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 620px; }
+.series-detail-table th {
+  text-align: left;
+  color: #93c5fd;
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(96,165,250,.16);
+}
+.series-detail-table td {
+  padding: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  color: var(--text);
+  vertical-align: top;
+}
+.series-detail-table tr:last-child td { border-bottom: none; }
+.series-detail-status {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-weight: 900;
+}
+.series-detail-status.correct { background: rgba(34,197,94,.15); color: #4ade80; }
+.series-detail-status.wrong { background: rgba(239,68,68,.15); color: #f87171; }
+.series-detail-status.timeout { background: rgba(148,163,184,.15); color: #cbd5e1; }
+.series-detail-message { color: var(--muted); padding: 4px 2px; }
 
 /* ── Footer / bouton retour ────────────────────────────────────────────── */
 .footer { padding: 0 14px 24px; }
@@ -327,6 +379,9 @@ html, body, * { cursor: auto !important; }
     <div class="section" id="seriesSection" style="display:none">
       <div class="section-title">Dernières séries</div>
       <div id="seriesList" style="display:flex;flex-direction:column;gap:8px">
+        <!-- Injecté par JS -->
+      </div>
+      <div id="seriesDetail" class="series-detail hidden" aria-live="polite">
         <!-- Injecté par JS -->
       </div>
     </div>
@@ -562,6 +617,100 @@ html, body, * { cursor: auto !important; }
     return penalty > 0 ? -penalty : 0;
   }
 
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    })[char]);
+  }
+
+  function getQuestionDisplayStatus(question) {
+    if (question.is_correct) return { key: "correct", label: "Juste" };
+    if (question.user_answer === "") return { key: "timeout", label: "Timeout" };
+    return { key: "wrong", label: "Faux" };
+  }
+
+  function hideSeriesDetail() {
+    const detail = document.getElementById("seriesDetail");
+    if (!detail) return;
+    detail.classList.add("hidden");
+    detail.innerHTML = "";
+  }
+
+  function renderSeriesDetailShell(title, bodyHtml) {
+    const detail = document.getElementById("seriesDetail");
+    if (!detail) return;
+    detail.classList.remove("hidden");
+    detail.innerHTML = `
+      <div class="series-detail-head">
+        <div class="series-detail-title">${escapeHtml(title)}</div>
+        <button class="series-detail-close" type="button" id="closeSeriesDetail">Retour</button>
+      </div>
+      <div class="series-detail-body">${bodyHtml}</div>
+    `;
+    document.getElementById("closeSeriesDetail")?.addEventListener("click", hideSeriesDetail);
+    detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  async function showSeriesDetail(series) {
+    if (!currentStudent || !series?.id) return;
+    const levelLabel = { beginner: "Débutant", intermediate: "Intermédiaire", expert: "Expert" };
+    const title = `${levelLabel[series.level] || "Série"} • ${new Date(series.created_at).toLocaleDateString("fr-FR")}`;
+    renderSeriesDetailShell(title, `<div class="series-detail-message">Chargement des calculs…</div>`);
+
+    const { data, error } = await _qClient
+      .from("question_results")
+      .select("question_text, user_answer, expected_answer, is_correct, category, created_at")
+      .eq("student_id", currentStudent.id)
+      .eq("series_id", series.id)
+      .neq("category", "refresh_penalty")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("[stats] détail série impossible:", error);
+      renderSeriesDetailShell(title, `<div class="series-detail-message">Impossible de charger le détail de cette série.</div>`);
+      return;
+    }
+
+    const questions = data || [];
+    if (questions.length === 0) {
+      renderSeriesDetailShell(title, `<div class="series-detail-message">Aucun détail disponible pour cette série.</div>`);
+      return;
+    }
+
+    const rows = questions.map((q, index) => {
+      const status = getQuestionDisplayStatus(q);
+      const userAnswer = q.user_answer == null ? "—" : q.user_answer === "" ? "timeout" : q.user_answer;
+      return `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${escapeHtml(q.question_text || "—")}</td>
+          <td>${escapeHtml(userAnswer)}</td>
+          <td>${escapeHtml(q.expected_answer || "—")}</td>
+          <td><span class="series-detail-status ${status.key}">${status.label}</span></td>
+        </tr>
+      `;
+    }).join("");
+
+    renderSeriesDetailShell(title, `
+      <table class="series-detail-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Question</th>
+            <th>Réponse élève</th>
+            <th>Bonne réponse</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `);
+  }
+
   // ── Chargement Supabase ──────────────────────────────────────────────────
   async function loadCategoryStats() {
     if (!currentStudent) await loadStudentContext();
@@ -715,6 +864,7 @@ html, body, * { cursor: auto !important; }
     const levelLabel = { beginner: "⚔️ Débutant", intermediate: "🔥 Intermédiaire", expert: "💀 Expert" };
     const list = document.getElementById("seriesList");
     list.innerHTML = "";
+    hideSeriesDetail();
 
     series.forEach(s => {
       const xpNet = xpBySeries[s.id] ?? null;
@@ -725,6 +875,9 @@ html, body, * { cursor: auto !important; }
 
       const row = document.createElement("div");
       row.className = "series-row";
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-label", "Voir le détail de cette série");
       row.innerHTML = `
         <span class="sr-level">${levelLabel[s.level] || s.level}</span>
         <span class="sr-score">Score : <strong>${s.score ?? "—"}/10</strong></span>
@@ -732,6 +885,13 @@ html, body, * { cursor: auto !important; }
         ${hasPenalty ? `<span class="sr-penalty">🔄 −10 pénalité refresh</span>` : ""}
         <span class="sr-date">${date}</span>
       `;
+      row.addEventListener("click", () => showSeriesDetail(s));
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          showSeriesDetail(s);
+        }
+      });
       list.appendChild(row);
     });
 

@@ -5,7 +5,7 @@ const SUBCAT_TO_CAT = {
   carre_parfait:"puissances", racine_carree:"racines", puissance_10:"puissances",
   fractions_simplification:"fractions", fractions_meme_denominateur:"fractions",
   addition_relatifs:"addition", soustraction_relatifs:"soustraction",
-  multiplication_relatifs:"multiplication", division_relative:"division",
+  multiplication_relatifs:"multiplication", division_relatifs:"division",
   // Expert
   puissance_cube:"puissances", fractions_denominateurs_differents:"fractions",
   pourcentage_entier:"pourcentages", reduction_termes:"calcul_litteral", distributivite_simple:"calcul_litteral",
@@ -39,7 +39,7 @@ const SUBCAT_LABELS = {
   addition_relatifs:                  "Addition de relatifs",
   soustraction_relatifs:              "Soustraction de relatifs",
   multiplication_relatifs:            "Multiplication de relatifs",
-  division_relative:                  "Division de relatifs",
+  division_relatifs:                  "Division de relatifs",
   // ── Expert ────────────────────────────────────────────────────────────
   addition_3chiffres:                 "Addition (3 chiffres)",
   soustraction_3chiffres:             "Soustraction (3 chiffres)",

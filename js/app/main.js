@@ -741,8 +741,8 @@ function updateActiveButton(levelKey){
 // TIMER_CONFIG et getTimeLimit → js/config/timers.js
 
 function genBeginnerQuestion(){
-  // Débutant : 4 opérations de base, opérandes ≤ 2 chiffres
-  const type = randomChoice(["add","add","sub","sub","mul","mul","div"]);
+  // Débutant : 4 opérations de base, opérandes ≤ 2 chiffres + relatifs simples.
+  const type = randomChoice(["add","add","sub","sub","mul","mul","div","rel_add","rel_sub","rel_mul","rel_div"]);
   let a,b,v,text,subcategory,category;
   if(type==="add"){
     a=randomInt(1,30); b=randomInt(1,30); v=a+b; text=`${a} + ${b}`;
@@ -755,10 +755,23 @@ function genBeginnerQuestion(){
   } else if(type==="mul"){
     a=randomInt(2,12); b=randomInt(2,12); v=a*b; text=`${a} × ${b}`;
     subcategory = "multiplication_simple"; category = "multiplication";
-  } else {
+  } else if(type==="div"){
     // Division simple : dividende ≤ 2 chiffres (b×v ≤ 81 ✓)
     b=randomInt(2,9); v=randomInt(1,9); a=b*v; text=`${a} ÷ ${b}`;
     subcategory = "division_simple"; category = "division";
+  } else if(type==="rel_add"){
+    a=randomInt(-9,9)||1; b=randomInt(-9,9)||-2; v=a+b; text=`${formatSigned(a)} + ${formatSigned(b)}`;
+    subcategory = "addition_relatifs"; category = "addition";
+  } else if(type==="rel_sub"){
+    a=randomInt(-9,9)||1; b=randomInt(-9,9)||-2; v=a-b; text=`${formatSigned(a)} - ${formatSigned(b)}`;
+    subcategory = "soustraction_relatifs"; category = "soustraction";
+  } else if(type==="rel_mul"){
+    a=randomInt(-9,9)||-3; b=randomInt(-9,9)||2; v=a*b; text=`${formatSigned(a)} × ${formatSigned(b)}`;
+    subcategory = "multiplication_relatifs"; category = "multiplication";
+  } else {
+    b=randomChoice([-9,-8,-7,-6,-5,-4,-3,-2,2,3,4,5,6,7,8,9]);
+    v=randomInt(-9,9)||2; a=b*v; text=`${formatSigned(a)} ÷ ${formatSigned(b)}`;
+    subcategory = "division_relatifs"; category = "division";
   }
   return { text, answer:{kind:"number", value:v}, answerDisplay:String(v), timeLimit:getTimeLimit("beginner",subcategory), category, subcategory };
 }
@@ -823,7 +836,7 @@ function genIntermediateQuestion(){
   } else {
     // rel_div — dividende = diviseur × quotient entier
     const b=randomChoice([-9,-8,-7,-6,-5,-4,-3,-2,2,3,4,5,6,7,8,9]),v=randomInt(-9,9)||2,a=b*v;
-    q={text:`${formatSigned(a)} ÷ ${formatSigned(b)}`,answer:{kind:"number",value:v},answerDisplay:String(v),category:"division",subcategory:"division_relative"};
+    q={text:`${formatSigned(a)} ÷ ${formatSigned(b)}`,answer:{kind:"number",value:v},answerDisplay:String(v),category:"division",subcategory:"division_relatifs"};
   }
   q.timeLimit = getTimeLimit("intermediate", q.subcategory);
   return q;
@@ -991,7 +1004,7 @@ const SUBCATEGORY_GENERATORS = {
   addition_relatifs:       () => { const a=randomInt(-99,99)||1,b=randomInt(-99,99)||1; return {text:`${formatSigned(a)} + ${formatSigned(b)}`,answer:{kind:"number",value:a+b},answerDisplay:String(a+b),timeLimit:getTimeLimit("intermediate","addition_relatifs"),category:"addition",subcategory:"addition_relatifs"}; },
   soustraction_relatifs:   () => { const a=randomInt(-99,99)||1,b=randomInt(-99,99)||1; return {text:`${formatSigned(a)} - ${formatSigned(b)}`,answer:{kind:"number",value:a-b},answerDisplay:String(a-b),timeLimit:getTimeLimit("intermediate","soustraction_relatifs"),category:"soustraction",subcategory:"soustraction_relatifs"}; },
   multiplication_relatifs: () => { const a=randomInt(-9,9)||2,b=randomInt(-9,9)||3; return {text:`${formatSigned(a)} × ${formatSigned(b)}`,answer:{kind:"number",value:a*b},answerDisplay:String(a*b),timeLimit:getTimeLimit("intermediate","multiplication_relatifs"),category:"multiplication",subcategory:"multiplication_relatifs"}; },
-  division_relative:       () => { const b=randomChoice([-9,-8,-7,-6,-5,-4,-3,-2,2,3,4,5,6,7,8,9]),v=randomInt(-9,9)||2,a=b*v; return {text:`${formatSigned(a)} ÷ ${formatSigned(b)}`,answer:{kind:"number",value:v},answerDisplay:String(v),timeLimit:getTimeLimit("intermediate","division_relative"),category:"division",subcategory:"division_relative"}; },
+  division_relatifs:       () => { const b=randomChoice([-9,-8,-7,-6,-5,-4,-3,-2,2,3,4,5,6,7,8,9]),v=randomInt(-9,9)||2,a=b*v; return {text:`${formatSigned(a)} ÷ ${formatSigned(b)}`,answer:{kind:"number",value:v},answerDisplay:String(v),timeLimit:getTimeLimit("intermediate","division_relatifs"),category:"division",subcategory:"division_relatifs"}; },
 };
 
 // SUBCAT_TO_CAT → js/config/categories.js
@@ -1001,7 +1014,7 @@ const CATEGORY_GENERATORS = {
   addition:       () => { const q=genIntermediateQuestion(); return q.category==="addition" ? q : SUBCATEGORY_GENERATORS.addition_relatifs(); },
   soustraction:   () => { const q=genIntermediateQuestion(); return q.category==="soustraction" ? q : SUBCATEGORY_GENERATORS.soustraction_relatifs(); },
   multiplication: () => SUBCATEGORY_GENERATORS.multiplication_relatifs(),
-  division:       () => SUBCATEGORY_GENERATORS.division_relative(),
+  division:       () => SUBCATEGORY_GENERATORS.division_relatifs(),
   fractions:      () => { const q=genIntermediateQuestion(); return q.category==="fractions" ? q : genIntermediateFractionSimplifyQuestion(); },
   puissances:     () => { const q=genIntermediateQuestion(); return q.category==="puissances" ? q : SUBCATEGORY_GENERATORS.carre_parfait(); },
   racines:        () => SUBCATEGORY_GENERATORS.racine_carree(),
@@ -1828,7 +1841,7 @@ function buildCoachingFeedback(pct, avgTime) {
     addition_relatifs:                  "Addition de relatifs",
     soustraction_relatifs:              "Soustraction de relatifs",
     multiplication_relatifs:            "Multiplication de relatifs",
-    division_relative:                  "Division de relatifs",
+    division_relatifs:                  "Division de relatifs",
     // ── Expert ────────────────────────────────────────────────────────────
     addition_3chiffres:                 "Addition (3 chiffres)",
     soustraction_3chiffres:             "Soustraction (3 chiffres)",
