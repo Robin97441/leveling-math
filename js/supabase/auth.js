@@ -512,6 +512,12 @@ async function _authShowApp(user, fromLogin = false) {
     .finally(() => {
       console.log("[SYNC] background sync finished");
     });
+
+  // Une reprise doit attendre l'hydratation du pseudo et du compte, mais ne
+  // doit pas faire partie de _authReadyPromise car startQuiz() attend celle-ci.
+  window._authReadyPromise
+    .then(() => window.resumeSavedSeriesAfterReload?.())
+    .catch(e => console.error("[quiz-start] reprise automatique échouée:", e));
 }
 
 function _authShowOverlay() {

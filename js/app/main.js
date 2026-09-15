@@ -14,16 +14,19 @@ let xpMultiplier = 1;             // 1 ou 2. Passe à 2 après une série parfai
 let xpMultiplierLevelKey = null;  // Niveau dans lequel le bonus x2 a été gagné.
 let hasSavedSeries = false;
 let activeSeriesId = null;
+let activeLocalSeriesId = null;     // identité locale avant attribution de l'UUID Supabase
 let activeSessionForQuiz = null;
 let _refreshPenaltyApplied = false; // true dès que la pénalité -10 XP a été enregistrée en base
 let _refreshPenaltyPending = false; // true entre la reprise (startQuiz) et la première réponse
 let isSubmitting = false;           // verrou très court contre le double clic.
 let pendingSupabaseSaves = 0;       // sauvegardes submit_answer en arrière-plan.
 let backgroundSaveChain = Promise.resolve(); // garantit l'ordre des RPC submit_answer.
-let _offlineQueue = [];             // [{args, seriesId, sessionId}] — saves en attente de connexion.
+let _offlineQueue = [];             // saves en attente, regroupées par localSeriesId.
 let _retryTimerId = null;
 let _retryInProgress = false;
 let _syncBannerTimeout = null;
+let _seriesStateWritesSuspended = false;
+let _offlineReplayIsForInactiveSeries = false;
 let isStartingQuiz = false;
 let countdownTimeouts = [];
 let countdownOverlayEl = null;
@@ -314,6 +317,15 @@ function getSessionStorageKey(){
   const authUserId = getActiveStorageUserId();
   return authUserId ? `currentSession:${authUserId}` : "currentSession";
 }
+function getSeriesStateStorageKey(authUserId = getActiveStorageUserId()){
+  return authUserId ? `${SERIES_STATE_KEY}:${authUserId}` : SERIES_STATE_KEY;
+}
+function createLocalSeriesId(){
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 function loadGame(){
   const authUserId = getActiveStorageUserId();
   const storageKey = getSaveStorageKey();
@@ -358,9 +370,15 @@ function loadGame(){
 // Appelé dès le démarrage de la série (pas après la première réponse).
 // Cela empêche le reroll : un refresh retrouve exactement les mêmes questions.
 function saveSeriesState(){
+  if (_seriesStateWritesSuspended) return;
   try {
-    localStorage.setItem(SERIES_STATE_KEY, JSON.stringify({
+    const authUserId = getActiveStorageUserId();
+    const storageKey = getSeriesStateStorageKey(authUserId);
+    if (!activeLocalSeriesId) activeLocalSeriesId = createLocalSeriesId();
+    localStorage.setItem(storageKey, JSON.stringify({
+      authUserId,
       pseudo:       pseudo,             // pour invalider si l'élève change
+      localSeriesId: activeLocalSeriesId,
       levelKey:     currentLevelKey,
       questions:    questions,          // tableau complet généré une seule fois
       questionIndex: currentQuestionIndex,
@@ -379,24 +397,61 @@ function saveSeriesState(){
 // Retourne l'objet ou null si aucune série en cours / élève différent / trop vieux.
 function loadSeriesState(){
   try {
-    const raw = localStorage.getItem(SERIES_STATE_KEY);
+    const authUserId = getActiveStorageUserId();
+    const storageKey = getSeriesStateStorageKey(authUserId);
+    let sourceKey = storageKey;
+    let raw = localStorage.getItem(storageKey);
+
+    // Migration de l'ancienne clé globale uniquement si l'ancienne session
+    // permet d'établir qu'elle appartient bien au compte courant.
+    if (!raw && authUserId && storageKey !== SERIES_STATE_KEY) {
+      const legacyRaw = localStorage.getItem(SERIES_STATE_KEY);
+      if (legacyRaw) {
+        try {
+          const legacyState = JSON.parse(legacyRaw);
+          const legacyOwner = legacyState?.authUserId || localStorage.getItem("auth_user_id");
+          if (legacyOwner === authUserId && legacyState?.pseudo === pseudo) {
+            raw = legacyRaw;
+            sourceKey = SERIES_STATE_KEY;
+          } else {
+            console.warn("[quiz-start] ancienne série globale ignorée — propriétaire différent ou inconnu");
+          }
+        } catch(e) {
+          console.warn("[quiz-start] ancienne série globale invalide ignorée");
+        }
+      }
+    }
     if(!raw) return null;
     const s = JSON.parse(raw);
     if(!s || !s.questions || !s.levelKey) return null;
+    if(authUserId && s.authUserId && s.authUserId !== authUserId) {
+      console.warn("[quiz-start] état série ignoré — user_id différent", {
+        expected: authUserId,
+        found: s.authUserId
+      });
+      return null;
+    }
     if(Number(s.questionIndex) >= s.questions.length) {
       console.log("[quiz-start] état série terminé ignoré", {
         questionIndex: s.questionIndex,
         total: s.questions.length
       });
-      localStorage.removeItem(SERIES_STATE_KEY);
+      localStorage.removeItem(sourceKey);
       return null;
     }
     // Invalider si l'élève a changé de pseudo
     if(s.pseudo !== pseudo) return null;
     // Invalider si l'état est trop vieux (> 2 heures) — série abandonnée
     if(Date.now() - (s.savedAt || 0) > 2 * 60 * 60 * 1000) {
-      localStorage.removeItem(SERIES_STATE_KEY);
+      localStorage.removeItem(sourceKey);
       return null;
+    }
+    if(sourceKey === SERIES_STATE_KEY && storageKey !== SERIES_STATE_KEY) {
+      s.authUserId = authUserId;
+      s.localSeriesId = s.localSeriesId || createLocalSeriesId();
+      localStorage.setItem(storageKey, JSON.stringify(s));
+      localStorage.removeItem(SERIES_STATE_KEY);
+      console.log("[quiz-start] état série migré vers la clé du compte authentifié");
     }
     return s;
   } catch(e) { return null; }
@@ -404,6 +459,7 @@ function loadSeriesState(){
 
 // Supprime l'état persisté. Appelé à la fin de série ou abandon explicite.
 function clearSeriesState(){
+  localStorage.removeItem(getSeriesStateStorageKey());
   localStorage.removeItem(SERIES_STATE_KEY);
 }
 
@@ -443,7 +499,7 @@ function unlockPseudo(){
   pseudo = ""; xp = 0; bestScore = 0; score = 0; streak = 0;
   xpMultiplier = 1; xpMultiplierLevelKey = null;
   statGames = 0; statBestAvgTime = null;
-  localSession = null; activeSessionForQuiz = null; activeSeriesId = null;
+  localSession = null; activeSessionForQuiz = null; activeSeriesId = null; activeLocalSeriesId = null;
   currentRankIndex = 0; quizStarted = false; hasSavedSeries = false;
 
   // Reset localStorage
@@ -1329,7 +1385,6 @@ async function recalculateStudentXpFromResults(student, { updateUi = false, reas
   });
 
   if (updateUi) {
-    const previousLocalXp = Number(xp) || 0;
     xp = displayXp;
     bestScore = Number(updatedStudent.best_score) || bestScore || 0;
     statBestAvgTime = updatedStudent.best_avg_time || statBestAvgTime || null;
@@ -1339,21 +1394,6 @@ async function recalculateStudentXpFromResults(student, { updateUi = false, reas
     updateRankUI();
     updateLevelButtons();
     saveGame();
-    if (
-      typeof rankIndexFromXp === "function" &&
-      typeof showRankOverlay === "function" &&
-      typeof RANKS !== "undefined"
-    ) {
-      const previousIndex = rankIndexFromXp(previousLocalXp);
-      const nextIndex = rankIndexFromXp(displayXp);
-      if (nextIndex > previousIndex) {
-        playRankUpSound();
-        showRankOverlay(RANKS[nextIndex], false);
-      } else if (nextIndex < previousIndex) {
-        playRankDownSound();
-        showRankOverlay(RANKS[nextIndex], true);
-      }
-    }
   }
 
   return {
@@ -1459,7 +1499,15 @@ function showSyncBanner(state) {
 
 // ── Queue de sauvegardes offline + retry ────────────────────────────────────
 function _enqueueOfflineSave(args) {
-  _offlineQueue.push({ args, seriesId: activeSeriesId, sessionId: activeSessionForQuiz });
+  if (!activeLocalSeriesId) activeLocalSeriesId = createLocalSeriesId();
+  _offlineQueue.push({
+    args,
+    seriesId: activeSeriesId,
+    localSeriesId: activeLocalSeriesId,
+    sessionId: activeSessionForQuiz,
+    refreshPenaltyPending: _refreshPenaltyPending,
+    refreshPenaltyApplied: _refreshPenaltyApplied
+  });
   showSyncBanner("pending");
   if (!_retryTimerId) {
     _retryTimerId = setInterval(_flushOfflineQueue, 8000);
@@ -1471,13 +1519,24 @@ async function _flushOfflineQueue() {
   if (_retryInProgress || _offlineQueue.length === 0) return;
   _retryInProgress = true;
   const savedSeriesId = activeSeriesId;
+  const savedLocalSeriesId = activeLocalSeriesId;
   const savedSession  = activeSessionForQuiz;
+  const savedRefreshPenaltyPending = _refreshPenaltyPending;
+  const savedRefreshPenaltyApplied = _refreshPenaltyApplied;
+  let restoredSeriesId = savedSeriesId;
+  let restoredRefreshPenaltyPending = savedRefreshPenaltyPending;
+  let restoredRefreshPenaltyApplied = savedRefreshPenaltyApplied;
   console.log("[offline-queue] flush start", { queueLength: _offlineQueue.length, online: navigator.onLine });
   try {
     while (_offlineQueue.length > 0) {
       const item = _offlineQueue[0];
       activeSeriesId       = item.seriesId;
+      activeLocalSeriesId  = item.localSeriesId;
       activeSessionForQuiz = item.sessionId;
+      _refreshPenaltyPending = !!item.refreshPenaltyPending;
+      _refreshPenaltyApplied = !!item.refreshPenaltyApplied;
+      _offlineReplayIsForInactiveSeries = item.localSeriesId !== savedLocalSeriesId;
+      _seriesStateWritesSuspended = _offlineReplayIsForInactiveSeries;
       pendingSupabaseSaves++;
       let saved = false;
       try {
@@ -1495,10 +1554,18 @@ async function _flushOfflineQueue() {
       }
       // Propager le series_id assigné par le RPC aux items suivants de la même série
       const assignedId = activeSeriesId;
-      const prevId     = item.seriesId;
+      const localSeriesId = item.localSeriesId;
       _offlineQueue.shift();
-      if (prevId !== assignedId) {
-        _offlineQueue.forEach(q => { if (q.seriesId === prevId) q.seriesId = assignedId; });
+      _offlineQueue.forEach(q => {
+        if (q.localSeriesId !== localSeriesId) return;
+        q.seriesId = assignedId;
+        q.refreshPenaltyPending = _refreshPenaltyPending;
+        q.refreshPenaltyApplied = _refreshPenaltyApplied;
+      });
+      if (localSeriesId === savedLocalSeriesId) {
+        restoredSeriesId = assignedId;
+        restoredRefreshPenaltyPending = _refreshPenaltyPending;
+        restoredRefreshPenaltyApplied = _refreshPenaltyApplied;
       }
       console.log("[offline-queue] item synchronized", { remaining: _offlineQueue.length });
     }
@@ -1513,8 +1580,14 @@ async function _flushOfflineQueue() {
   } catch (e) {
     console.error("[offline-queue] flush exception:", e);
   } finally {
-    activeSeriesId       = savedSeriesId;
+    _seriesStateWritesSuspended = false;
+    _offlineReplayIsForInactiveSeries = false;
+    activeSeriesId       = restoredSeriesId;
+    activeLocalSeriesId  = savedLocalSeriesId;
     activeSessionForQuiz = savedSession;
+    _refreshPenaltyPending = restoredRefreshPenaltyPending;
+    _refreshPenaltyApplied = restoredRefreshPenaltyApplied;
+    if (savedLocalSeriesId && restoredSeriesId !== savedSeriesId) saveSeriesState();
     _retryInProgress = false;
   }
 }
@@ -1632,6 +1705,7 @@ async function beginQuizStart({ source, levelKey = currentLevelKey, forceNew = f
       _seriesXpDelta = 0;
       _seriesQuestionResults = [];
       activeSeriesId = null;
+      activeLocalSeriesId = null;
       activeSessionForQuiz = null;
       hasSavedSeries = false;
       _refreshPenaltyApplied = false;
@@ -1714,6 +1788,7 @@ function showCorrectionAndContinue(){
   triggerFlash("bad");
   setTimeout(() => {
     currentQuestionIndex++;
+    saveSeriesState();
     showQuestion();
   }, 1400);
 }
@@ -2082,6 +2157,7 @@ async function startQuiz({ forceNew = false } = {}){
     _seriesXpDelta     = savedState.seriesXpDelta || 0;
     _seriesTimes       = savedState.seriesTimes   || [];
     activeSeriesId     = savedState.supabaseSeriesId || null;
+    activeLocalSeriesId = savedState.localSeriesId || createLocalSeriesId();
     activeSessionForQuiz = savedState.supabaseSession || null;
     hasSavedSeries     = false;
     _refreshPenaltyApplied = savedState.refreshPenaltyApplied || false;
@@ -2099,6 +2175,7 @@ async function startQuiz({ forceNew = false } = {}){
     _seriesQuestionResults = [];
     hasSavedSeries     = false;
     activeSeriesId     = null;
+    activeLocalSeriesId = createLocalSeriesId();
     activeSessionForQuiz = null;
     _refreshPenaltyApplied = false;
     _refreshPenaltyPending = false;
@@ -2180,7 +2257,9 @@ async function startQuiz({ forceNew = false } = {}){
 }
 async function selectLevel(levelKey){
   const wasFinished = isFinishedQuizState();
-  const forceNew = wasFinished || levelKey !== currentLevelKey;
+  // Après F5, currentLevelKey repart à null : ce premier choix doit laisser
+  // startQuiz() restaurer une éventuelle série du même niveau.
+  const forceNew = wasFinished || (currentLevelKey !== null && levelKey !== currentLevelKey);
   if(xpMultiplier === 2 && xpMultiplierLevelKey && xpMultiplierLevelKey !== levelKey){
     const ok = confirm("Changer de niveau fera perdre ton bonus x2. Continuer ?");
     if(!ok){
@@ -2202,6 +2281,27 @@ async function selectLevel(levelKey){
   }
   await beginQuizStart({ source: "level", levelKey, forceNew });
 }
+
+async function resumeSavedSeriesAfterReload(){
+  if (quizStarted || isStartingQuiz) return false;
+  const savedState = loadSeriesState();
+  if (!savedState || !LEVELS[savedState.levelKey]) return false;
+
+  console.log("[quiz-start] reprise automatique après rechargement", {
+    levelKey: savedState.levelKey,
+    questionIndex: savedState.questionIndex,
+    series_id: savedState.supabaseSeriesId,
+    localSeriesId: savedState.localSeriesId,
+    storageKey: getSeriesStateStorageKey()
+  });
+  await beginQuizStart({
+    source: "reload-resume",
+    levelKey: savedState.levelKey,
+    forceNew: false
+  });
+  return true;
+}
+window.resumeSavedSeriesAfterReload = resumeSavedSeriesAfterReload;
 
 $("savePseudoBtn").addEventListener("click", savePseudo);
 

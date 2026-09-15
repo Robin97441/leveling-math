@@ -2,7 +2,7 @@
 // Dépend de _qClient (client.js).
 // Dépend des globaux du jeu : pseudo, activeSessionForQuiz, activeSeriesId,
 //   currentLevelKey, _currentAuthUserId, _refreshPenaltyPending,
-//   _refreshPenaltyApplied, _seriesXpDelta (définis dans leveling_math.html).
+//   _refreshPenaltyApplied, _seriesXpDelta, applyXp (définis dans main.js).
 
 async function saveQuestionResult(
   isCorrect, responseTime, category,
@@ -50,10 +50,6 @@ async function saveQuestionResult(
 
     // ── Pénalité refresh : enregistrée exactement une fois par série reprise ──
     if (_refreshPenaltyPending) {
-      _refreshPenaltyPending = false;
-      _refreshPenaltyApplied = true;
-      saveSeriesState();
-      showPenaltyBanner(false);
       const { data: penData, error: penErr } = await _qClient.rpc("submit_answer", {
         p_student_id: student.id,
         p_series_id: activeSeriesId,
@@ -69,15 +65,36 @@ async function saveQuestionResult(
         p_answer_kind: "refresh_penalty"
       });
       if (penErr) {
+        // Sans confirmation serveur, la pénalité reste due au prochain retry.
         _refreshPenaltyPending = true;
         _refreshPenaltyApplied = false;
+        saveSeriesState();
+        showPenaltyBanner(true);
         console.error("❌ Pénalité refresh non enregistrée:", penErr);
         return false;
       }
       else {
-        _seriesXpDelta -= 10;
-        activeSeriesId = penData?.series_id || activeSeriesId;
+        const penaltySeriesId = penData?.series_id || activeSeriesId;
+        if (!penaltySeriesId) {
+          _refreshPenaltyPending = true;
+          _refreshPenaltyApplied = false;
+          saveSeriesState();
+          showPenaltyBanner(true);
+          console.error("❌ Pénalité refresh confirmée sans series_id — retry conservé par sécurité");
+          return false;
+        }
+
+        // Le series_id retourné devient l'identité définitive avant la réponse normale.
+        activeSeriesId = penaltySeriesId;
+        _refreshPenaltyPending = false;
+        _refreshPenaltyApplied = true;
+        if (typeof _offlineReplayIsForInactiveSeries === "undefined" || !_offlineReplayIsForInactiveSeries) {
+          _seriesXpDelta -= 10;
+        }
+        // applyXp est l'unique source d'animation pour cette vraie perte d'XP.
+        if (typeof applyXp === "function") applyXp(-10);
         saveSeriesState();
+        showPenaltyBanner(false);
         console.log("🚫 Pénalité refresh enregistrée via RPC — série", activeSeriesId);
       }
     }
@@ -122,7 +139,13 @@ async function saveQuestionResult(
       });
       return false;
     }
-    activeSeriesId = data?.series_id || activeSeriesId;
+    const returnedSeriesId = data?.series_id || activeSeriesId;
+    if (!returnedSeriesId) {
+      console.error("❌ submit_answer réussi sans series_id — identité de série non persistable");
+      return false;
+    }
+    activeSeriesId = returnedSeriesId;
+    // Persistance immédiate : les écritures suivantes réutilisent ce même UUID.
     saveSeriesState();
     console.log("[progress] submit_answer OK", {
       student_id: student.id,
@@ -156,7 +179,6 @@ async function saveQuestionResult(
       return true;
     }
 
-    const previousLocalXp = typeof xp !== "undefined" ? Number(xp) || 0 : null;
     const nextServerXp = (Number(freshStudent.xp_total) || 0) + (Number(freshStudent.manual_xp_bonus) || 0);
     if (typeof xp !== "undefined") xp = nextServerXp;
     if (typeof bestScore !== "undefined") bestScore = Number(freshStudent.best_score) || 0;
@@ -164,22 +186,6 @@ async function saveQuestionResult(
     if (typeof statGames !== "undefined") statGames = Number(freshStudent.games_played) || 0;
     if (typeof localSession !== "undefined") localSession = freshStudent.session || activeSessionForQuiz;
     if (typeof updateRankUI === "function") updateRankUI();
-    if (
-      previousLocalXp !== null &&
-      typeof rankIndexFromXp === "function" &&
-      typeof showRankOverlay === "function" &&
-      typeof RANKS !== "undefined"
-    ) {
-      const previousIndex = rankIndexFromXp(previousLocalXp);
-      const nextIndex = rankIndexFromXp(nextServerXp);
-      if (nextIndex > previousIndex) {
-        if (typeof playRankUpSound === "function") playRankUpSound();
-        showRankOverlay(RANKS[nextIndex], false);
-      } else if (nextIndex < previousIndex) {
-        if (typeof playRankDownSound === "function") playRankDownSound();
-        showRankOverlay(RANKS[nextIndex], true);
-      }
-    }
     if (typeof updateLevelButtons === "function") updateLevelButtons();
     if (typeof saveGame === "function") saveGame();
     return true;
