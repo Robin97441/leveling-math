@@ -429,15 +429,6 @@ async function authSignOut() {
   _authShowOverlay();
 }
 
-/* ── Loader helpers ───────────────────────────────────────────────────── */
-function _showLoader(msg) {
-  const el = document.getElementById("loading-overlay");
-  if (el) {
-    el.style.display = "flex";
-    const msgEl = document.getElementById("loader-message");
-    if (msgEl && msg) msgEl.textContent = msg;
-  }
-}
 function _hideLoader() {
   const el = document.getElementById("loading-overlay");
   if (el) el.style.display = "none";
@@ -457,6 +448,7 @@ async function _authShowApp(user, fromLogin = false) {
     return;
   }
   _authShowAppInProgress = true;
+  if (typeof renderLevelingObjective === "function") renderLevelingObjective(null);
   _currentAuthUserId = user.id;
   window._currentAuthUserId = user.id;
   window._levelingMathAuthUser = user;
@@ -523,6 +515,7 @@ async function _authShowApp(user, fromLogin = false) {
 function _authShowOverlay() {
   _currentAuthUserId = null;
   window._currentAuthUserId = null;
+  if (typeof renderLevelingObjective === "function") renderLevelingObjective(null);
   document.body.classList.add("auth-visible");
   document.getElementById("auth-overlay").style.display = "flex";
   document.getElementById("auth-user-bar").classList.remove("visible");

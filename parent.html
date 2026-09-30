@@ -223,7 +223,9 @@ const state = {
   user: null,
   children: [],
   selectedStudent: null,
-  series: []
+  series: [],
+  studentRequestVersion: 0,
+  detailRequestVersion: 0
 };
 
 const levelLabel = {
@@ -294,6 +296,8 @@ async function linkParentWithCode(code) {
 }
 
 function showAuthShell() {
+  state.studentRequestVersion++;
+  state.detailRequestVersion++;
   $("authSection").classList.remove("hidden");
   $("parentSection").classList.add("hidden");
   $("emptySection").classList.add("hidden");
@@ -372,7 +376,7 @@ function renderStudentSummary(student) {
   `;
 }
 
-async function loadSeries(student) {
+async function loadSeries(student, requestVersion) {
   $("seriesSection").classList.remove("hidden");
   $("seriesList").innerHTML = `<div class="message">Chargement des dernières séries…</div>`;
   hideSeriesDetail();
@@ -386,9 +390,11 @@ async function loadSeries(student) {
     .limit(10);
 
   if (error) throw error;
+  if (requestVersion !== state.studentRequestVersion || state.selectedStudent?.id !== student.id) return false;
 
   state.series = data || [];
   renderSeriesList();
+  return true;
 }
 
 function renderSeriesList() {
@@ -454,16 +460,20 @@ function renderDetailShell(title, bodyHtml) {
 
 async function showSeriesDetail(series) {
   if (!state.selectedStudent || !series?.id) return;
+  const selectedStudentId = state.selectedStudent.id;
+  const requestVersion = ++state.detailRequestVersion;
   const title = `${levelLabel[series.level] || "Série"} • ${formatDate(series.created_at)}`;
   renderDetailShell(title, `<div class="message">Chargement du détail…</div>`);
 
   const { data, error } = await _qClient
     .from("question_results")
     .select("question_text, user_answer, expected_answer, is_correct, category, created_at")
-    .eq("student_id", state.selectedStudent.id)
+    .eq("student_id", selectedStudentId)
     .eq("series_id", series.id)
     .neq("category", "refresh_penalty")
     .order("created_at", { ascending: true });
+
+  if (requestVersion !== state.detailRequestVersion || state.selectedStudent?.id !== selectedStudentId) return;
 
   if (error) {
     console.error("[parent] détail série impossible:", error);
@@ -504,12 +514,15 @@ async function showSeriesDetail(series) {
 async function selectStudent(studentId) {
   const student = state.children.find(item => item.id === studentId);
   if (!student) return;
+  const requestVersion = ++state.studentRequestVersion;
+  state.detailRequestVersion++;
   state.selectedStudent = student;
   renderChildSelector();
   renderStudentSummary(student);
   try {
-    await loadSeries(student);
+    await loadSeries(student, requestVersion);
   } catch (error) {
+    if (requestVersion !== state.studentRequestVersion || state.selectedStudent?.id !== student.id) return;
     console.error("[parent] séries inaccessibles:", error);
     $("seriesList").innerHTML = `<div class="message error">Impossible de charger les séries de cet élève.</div>`;
   }

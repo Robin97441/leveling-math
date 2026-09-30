@@ -1,6 +1,8 @@
 console.log("[INIT] main.js chargé");
 const STORAGE_KEY = "leveling_math_v38_save";
 const SERIES_STATE_KEY = "leveling_math_series_state"; // état de la série en cours (survit au refresh)
+const TARGETED_SERIES_STATE_KEY = "leveling_math_targeted_series_state";
+const DEFAULT_LEVELING_OBJECTIVE = "S'entraîner en calcul mental et viser le rang Champion avant le prochain cours.";
 const EPS = 1e-9;
 
 let currentLevel = null, currentLevelKey = null, questions = [], currentQuestionIndex = 0, score = 0, streak = 0;
@@ -30,6 +32,34 @@ let _offlineReplayIsForInactiveSeries = false;
 let isStartingQuiz = false;
 let countdownTimeouts = [];
 let countdownOverlayEl = null;
+let answerHardwareKeyboardUsed = false;
+let gameMode = "general";
+let targetedSkillKey = null;
+let targetedDifficulty = null;
+let targetedProgress = {};
+let targetedProgressBySkill = {};
+let targetedProgressLoaded = false;
+let targetedProgressLoading = false;
+let targetedProgressLoadError = null;
+let targetedProgressRequestVersion = 0;
+let targetedStudentId = null;
+let activeTargetedSeriesId = null;
+let targetedSeriesXp = 0;
+const TARGETED_PROGRESS_TIMEOUT_MS = 12000;
+
+function targetedUiNow(){
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
+function targetedUiDebugLog(details){
+  try {
+    if (window.localStorage?.getItem("leveling_math_debug_targeted") === "1") {
+      console.log("[TARGETED] timing", details);
+    }
+  } catch (_) {}
+}
 
 const sounds = {
   correct: new Audio("data:audio/wav;base64,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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
@@ -124,19 +154,6 @@ async function primeWebAudio(){
 document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') needsAudioReprime = true; });
 window.addEventListener('focus', () => { needsAudioReprime = true; });
 window.addEventListener('pageshow', () => { needsAudioReprime = true; });
-function playBeep(freq, dur, vol, type='sine'){
-  if(!soundEnabled) return;
-  try {
-    const ctx = getAudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.type = type; osc.frequency.setValueAtTime(freq, ctx.currentTime);
-    gain.gain.setValueAtTime(vol, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + dur);
-  } catch(e) {}
-}
 function playTone(freq, dur, vol, attack, type='sine'){
   if(!soundEnabled) return;
   try {
@@ -285,9 +302,21 @@ function showCountdown(callback){
 const $ = id => document.getElementById(id);
 const scoreEl = $("score"), questionCountEl = $("questionCount"), timerEl = $("timer"), xpValueEl = $("xpValue"), xpTotalEl = $("xpTotal"),
 progressFillEl = $("progressFill"), selectedLevelEl = $("selectedLevel"), questionEl = $("question"), helperEl = $("helper"),
-answerInputEl = $("answerInput"), validateBtnEl = $("validateBtn"), restartBtnEl = $("restartBtn"), feedbackEl = $("feedback"),
+answerInputEl = window.LevelingMathInput?.createAdapter($("answerInput")) || $("answerInput"), validateBtnEl = $("validateBtn"), restartBtnEl = $("restartBtn"), feedbackEl = $("feedback"),
 resultEl = $("result"), xpFillEl = $("xpFill"), rankLabelEl = $("rankLabel"), pseudoInputEl = $("pseudoInput"), pseudoDisplayEl = $("pseudoDisplay"),
 penaltyBannerEl = $("refresh-penalty-banner");
+const modeGeneralBtnEl = $("mode-general-btn"), modeTargetedBtnEl = $("mode-targeted-btn"),
+generalLevelsPanelEl = $("general-levels-panel"), targetedMenuEl = $("targeted-menu"),
+targetedSkillListEl = $("targeted-skill-list"), targetedSkillPanelEl = $("targeted-skill-panel"),
+targetedDifficultyListEl = $("targeted-difficulty-list"), targetedSkillTitleEl = $("targeted-skill-title"),
+targetedMasteredEl = $("targeted-mastered"), xpTotalLabelEl = $("xp-total-label");
+
+function renderLevelingObjective(value) {
+  const objectiveEl = $("levelingObjective");
+  if (!objectiveEl) return;
+  const personalizedObjective = typeof value === "string" ? value.trim() : "";
+  objectiveEl.textContent = `Objectif : ${personalizedObjective || DEFAULT_LEVELING_OBJECTIVE}`;
+}
 
 /** Affiche / masque le banner de pénalité refresh pendant la série. */
 function showPenaltyBanner(visible) {
@@ -463,6 +492,62 @@ function clearSeriesState(){
   localStorage.removeItem(SERIES_STATE_KEY);
 }
 
+function getTargetedSeriesStateStorageKey(authUserId = getActiveStorageUserId()){
+  return authUserId ? `${TARGETED_SERIES_STATE_KEY}:${authUserId}` : TARGETED_SERIES_STATE_KEY;
+}
+
+function saveTargetedSeriesState(questionIndex = currentQuestionIndex){
+  if (!targetedSkillKey || !targetedDifficulty || !Array.isArray(questions) || questions.length === 0) return;
+  try {
+    const authUserId = getActiveStorageUserId();
+    localStorage.setItem(getTargetedSeriesStateStorageKey(authUserId), JSON.stringify({
+      authUserId,
+      pseudo,
+      skillKey: targetedSkillKey,
+      difficulty: targetedDifficulty,
+      questions,
+      questionIndex,
+      score,
+      seriesTimes: _seriesTimes,
+      targetedSeriesId: activeTargetedSeriesId,
+      studentId: targetedStudentId,
+      seriesXp: targetedSeriesXp,
+      savedAt: Date.now()
+    }));
+  } catch(e) {
+    console.warn("[targeted] sauvegarde locale de série impossible:", e);
+  }
+}
+
+function loadTargetedSeriesState(){
+  try {
+    const authUserId = getActiveStorageUserId();
+    const raw = localStorage.getItem(getTargetedSeriesStateStorageKey(authUserId));
+    if (!raw) return null;
+    const state = JSON.parse(raw);
+    if (!state?.skillKey || !state?.difficulty || !Array.isArray(state.questions)) return null;
+    if (authUserId && state.authUserId !== authUserId) return null;
+    if (state.pseudo !== pseudo) return null;
+    if (Number(state.questionIndex) >= state.questions.length) {
+      clearTargetedSeriesState();
+      return null;
+    }
+    if (Date.now() - (state.savedAt || 0) > 2 * 60 * 60 * 1000) {
+      clearTargetedSeriesState();
+      return null;
+    }
+    return state;
+  } catch(e) {
+    console.warn("[targeted] état local invalide ignoré:", e);
+    return null;
+  }
+}
+
+function clearTargetedSeriesState(){
+  localStorage.removeItem(getTargetedSeriesStateStorageKey());
+  localStorage.removeItem(TARGETED_SERIES_STATE_KEY);
+}
+
 function clearXpBonus(reason = "unknown") {
   if(xpMultiplier === 2) {
     console.log("[bonus-x2] bonus nettoyé :", reason, "| niveau =", xpMultiplierLevelKey);
@@ -500,6 +585,10 @@ function unlockPseudo(){
   xpMultiplier = 1; xpMultiplierLevelKey = null;
   statGames = 0; statBestAvgTime = null;
   localSession = null; activeSessionForQuiz = null; activeSeriesId = null; activeLocalSeriesId = null;
+  targetedSkillKey = null; targetedDifficulty = null; targetedStudentId = null; activeTargetedSeriesId = null;
+  targetedProgress = {}; targetedProgressBySkill = {}; targetedProgressLoaded = false;
+  targetedProgressLoading = false; targetedProgressLoadError = null; targetedProgressRequestVersion++;
+  targetedSeriesXp = 0; gameMode = "general";
   currentRankIndex = 0; quizStarted = false; hasSavedSeries = false;
 
   // Reset localStorage
@@ -508,6 +597,7 @@ function unlockPseudo(){
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem("currentSession");
   clearSeriesState(); // série en cours
+  clearTargetedSeriesState();
 
   // Reset UI pseudo
   pseudoInputEl.value = "";
@@ -516,6 +606,7 @@ function unlockPseudo(){
   pseudoInputEl.style.cursor = "";
   $("savePseudoBtn").style.display = "";
   pseudoDisplayEl.textContent = "-";
+  renderLevelingObjective(null);
 
   // Reset UI progression
   if(scoreEl) scoreEl.textContent = "0";
@@ -556,6 +647,12 @@ function randomChoice(arr){ return arr[Math.floor(Math.random() * arr.length)]; 
 function gcd(a,b){ a=Math.abs(a); b=Math.abs(b); while(b){ const t=b; b=a%b; a=t; } return a||1; }
 function lcm(a,b){ return Math.abs(a*b)/gcd(a,b); }
 function formatSigned(n){ return n < 0 ? "(" + n + ")" : String(n); }
+function formatFractionOperation(n1, d1, operator, n2, d2){
+  const displayedOperator = n2 < 0
+    ? (operator === "+" ? "-" : "+")
+    : operator;
+  return `${n1}/${d1} ${displayedOperator} ${Math.abs(n2)}/${d2}`;
+}
 
 // Retourne la couleur (#hex) selon le temps de réponse et la sous-catégorie.
 function getResponseTimeColor(seconds, subcategory) {
@@ -594,21 +691,28 @@ function getResponseTimeColor(seconds, subcategory) {
 
 // ── Calcul littéral ────────────────────────────────────────────────────────
 
-// Normalise une expression en {a, b, c} pour ax² + bx + c
-// Accepte x², x^2, ordre quelconque des termes, signes, espaces
+// Normalise une expression en {d, a, b, c} pour dx³ + ax² + bx + c.
+// Les questions existantes restent des polynômes de degré 2 avec d = 0.
 function normalizeExpression(expr) {
   if (!expr) return null;
   let s = expr.trim()
     .replace(/\s+/g, '')
+    .replace(/x\^3/gi, '¤')
+    .replace(/x³/gi, '¤')
     .replace(/x\^2/gi, '§')
     .replace(/x²/gi, '§')
     .replace(/x/gi, '#');
   // Insère un + avant chaque - précédé d'un chiffre ou placeholder
-  s = s.replace(/([0-9§#])(-)/g, '$1+$2');
-  let a = 0, b = 0, c = 0;
+  s = s.replace(/([0-9¤§#])(-)/g, '$1+$2');
+  let d = 0, a = 0, b = 0, c = 0;
   const terms = s.split('+').filter(t => t !== '');
   for (const term of terms) {
-    if (term.includes('§')) {
+    if (term.includes('¤')) {
+      const coeff = term.replace('¤', '');
+      if (coeff === '' || coeff === '+') d += 1;
+      else if (coeff === '-') d -= 1;
+      else { const v = Number(coeff); if (!Number.isFinite(v)) return null; d += v; }
+    } else if (term.includes('§')) {
       const coeff = term.replace('§', '');
       if (coeff === '' || coeff === '+') a += 1;
       else if (coeff === '-') a -= 1;
@@ -625,16 +729,54 @@ function normalizeExpression(expr) {
       c += v;
     }
   }
-  return { a, b, c };
+  return { d, a, b, c };
 }
 
-// Formate {a,b,c} → chaîne lisible : ax² + bx + c
-function formatPolynomial(a, b, c) {
+function isReducedPolynomialForm(expr) {
+  if (typeof expr !== "string") return false;
+  const compact = expr.trim()
+    .replace(/\s+/g, "")
+    .replace(/x\^3/gi, "x³")
+    .replace(/x\^2/gi, "x²")
+    .replace(/X/g, "x");
+  if (!compact || /[()×*·/]/.test(compact)) return false;
+
+  const terms = compact.match(/[+-]?[^+-]+/g);
+  if (!terms || terms.join("") !== compact) return false;
+
+  const degrees = new Set();
+  for (const term of terms) {
+    if (!/^[+-]?(?:\d+(?:\.\d+)?(?:x(?:[²³])?)?|x(?:[²³])?)$/.test(term)) return false;
+    const unsigned = term.replace(/^[+-]/, "");
+    const degree = unsigned.endsWith("x³") ? 3 : unsigned.endsWith("x²") ? 2 : unsigned.endsWith("x") ? 1 : 0;
+    if (degrees.has(degree)) return false;
+    degrees.add(degree);
+
+    const coefficientText = unsigned.replace(/x[²³]?$/, "");
+    const coefficient = coefficientText === "" ? 1 : Number(coefficientText);
+    if (!Number.isFinite(coefficient)) return false;
+    if (coefficient === 0 && !(terms.length === 1 && degree === 0)) return false;
+  }
+  return true;
+}
+
+// Formate {d,a,b,c} → chaîne lisible : dx³ + ax² + bx + c
+function formatPolynomial(a, b, c, d = 0) {
   const parts = [];
+  if (d !== 0) {
+    if (d === 1) parts.push('x³');
+    else if (d === -1) parts.push('-x³');
+    else parts.push(`${d}x³`);
+  }
   if (a !== 0) {
-    if (a === 1) parts.push('x²');
-    else if (a === -1) parts.push('-x²');
-    else parts.push(`${a}x²`);
+    if (parts.length === 0) {
+      if (a === 1) parts.push('x²');
+      else if (a === -1) parts.push('-x²');
+      else parts.push(`${a}x²`);
+    } else if (a === 1) parts.push('+ x²');
+    else if (a === -1) parts.push('- x²');
+    else if (a > 0) parts.push(`+ ${a}x²`);
+    else parts.push(`- ${Math.abs(a)}x²`);
   }
   if (b !== 0) {
     if (parts.length === 0) {
@@ -695,10 +837,6 @@ function genDistributiviteSimple() {
   return { text, answer: { kind: 'polynomial', a: ra, b: rb, c: rc, value: poly }, answerDisplay: formatPolynomial(ra, rb, rc), timeLimit: 25, category: 'calcul_litteral', subcategory: 'distributivite_simple', hint: 'x² ou x^2 accepté' };
 }
 
-function genExpertLiteralQuestion() {
-  return randomChoice([genReductionTermes, genReductionTermes, genDistributiviteSimple])();
-}
-
 function parseInputValue(str){
   const s = str.replace(/\s+/g, "");
   if(!s) return null;
@@ -716,7 +854,10 @@ function areEquivalent(userInput, expectedValue){
   if (expectedValue && typeof expectedValue === 'object' && expectedValue.kind === 'polynomial') {
     const parsed = normalizeExpression(userInput);
     if (!parsed) return false;
-    return parsed.a === expectedValue.a && parsed.b === expectedValue.b && parsed.c === expectedValue.c;
+    return parsed.d === (expectedValue.d || 0)
+      && parsed.a === expectedValue.a
+      && parsed.b === expectedValue.b
+      && parsed.c === expectedValue.c;
   }
   const p = parseInputValue(userInput);
   return p !== null && Math.abs(p - expectedValue) < EPS;
@@ -728,7 +869,7 @@ function simplifyFraction(num, den){
   return den === 1 ? String(num) : `${num}/${den}`;
 }
 function valueToDisplay(answer){
-  if (answer.kind === 'polynomial') return formatPolynomial(answer.a, answer.b, answer.c);
+  if (answer.kind === 'polynomial') return formatPolynomial(answer.a, answer.b, answer.c, answer.d || 0);
   return answer.kind === "fraction" ? simplifyFraction(answer.num, answer.den) : (Number.isInteger(answer.value) ? String(answer.value) : String(answer.value));
 }
 function toggleSound(){ soundEnabled = !soundEnabled; updateSoundButton(); saveGame(); }
@@ -878,7 +1019,7 @@ function genIntermediateQuestion(){
   } else if(type==="frac_same"){
     const d=randomInt(2,9),n1=randomInt(-9,9)||2,n2=randomInt(-9,9)||-3,add=Math.random()<0.5;
     const num=add?n1+n2:n1-n2;
-    q={text:`${n1}/${d} ${add?"+":"-"} ${n2}/${d}`,answer:{kind:"fraction",num,den:d,value:num/d},answerDisplay:simplifyFraction(num,d),category:"fractions",subcategory:"fractions_meme_denominateur"};
+    q={text:formatFractionOperation(n1,d,add?"+":"-",n2,d),answer:{kind:"fraction",num,den:d,value:num/d},answerDisplay:simplifyFraction(num,d),category:"fractions",subcategory:"fractions_meme_denominateur"};
   } else if(type==="rel_add"){
   // ── Nombres relatifs ──────────────────────────────────────────────────────
     const a=randomInt(-99,99)||1,b=randomInt(-99,99)||1;
@@ -896,40 +1037,6 @@ function genIntermediateQuestion(){
   }
   q.timeLimit = getTimeLimit("intermediate", q.subcategory);
   return q;
-}
-function genExpertPowerQuestion(){
-  const type = randomChoice(["square","cube","tenpow"]);
-  if(type==="square"){ const a=randomInt(2,15); return { text:`${a}²`, answer:{kind:"number", value:a*a}, answerDisplay:String(a*a), timeLimit:15, category:"puissances", subcategory:"puissance_carre" }; }
-  if(type==="cube"){ const a=randomInt(2,6); return { text:`${a}³`, answer:{kind:"number", value:a*a*a}, answerDisplay:String(a*a*a), timeLimit:15, category:"puissances", subcategory:"puissance_cube" }; }
-  const n=randomChoice([-6,-5,-4,-3,-2,-1,1,2,3,4,5,6]);
-  return { text:`10^${n}`, answer:{kind:"number", value:Math.pow(10,n)}, answerDisplay:String(Math.pow(10,n)), timeLimit:15, category:"puissances", subcategory:"puissance_10" };
-}
-function genExpertFractionQuestion(){
-  const type=randomChoice(["same_add","same_sub","diff_add","diff_sub","mul","div"]);
-  let n1,d1,n2,d2,num,den,text,timeLimit=15;
-  if(type==="same_add"||type==="same_sub"){
-    d1=randomInt(2,9); n1=randomInt(-9,9)||2; n2=randomInt(-9,9)||-3;
-    text=`${n1}/${d1} ${type==="same_add"?"+":"-"} ${n2}/${d1}`;
-    num=type==="same_add" ? n1+n2 : n1-n2; den=d1;
-  } else if(type==="diff_add"||type==="diff_sub"){
-    d1=randomInt(2,9); d2=randomInt(2,9); while(d2===d1) d2=randomInt(2,9);
-    if(lcm(d1,d2)>36){ d1=2; d2=3; }
-    n1=randomInt(-9,9)||1; n2=randomInt(-9,9)||-1;
-    text=`${n1}/${d1} ${type==="diff_add"?"+":"-"} ${n2}/${d2}`;
-    num=type==="diff_add" ? (n1*d2+n2*d1) : (n1*d2-n2*d1); den=d1*d2; timeLimit=30;
-  } else if(type==="mul"){
-    n1=randomInt(-9,9)||2; d1=randomInt(2,9); n2=randomInt(-9,9)||-3; d2=randomInt(2,9);
-    text=`${n1}/${d1} × ${n2}/${d2}`; num=n1*n2; den=d1*d2;
-  } else {
-    n1=randomInt(-9,9)||4; d1=randomInt(2,9); n2=randomInt(-9,9)||5; d2=randomInt(2,9);
-    text=`${n1}/${d1} ÷ ${n2}/${d2}`; num=n1*d2; den=d1*n2;
-  }
-  if(den===0) den=1;
-  const subcategory = (type==="same_add"||type==="same_sub") ? "fractions_meme_denominateur"
-    : (type==="diff_add"||type==="diff_sub") ? "fractions_denominateurs_differents"
-    : type==="mul" ? "fractions_multiplication"
-    : "fractions_division";
-  return { text, answer:{kind:"fraction", num, den, value:num/den}, answerDisplay:simplifyFraction(num, den), timeLimit, category:"fractions", subcategory };
 }
 function genExpertPercentQuestion(){
   // Pourcentages entiers "ronds" garantissant un résultat propre (entier ou .5 au pire)
@@ -995,7 +1102,7 @@ function genExpertQuestion(){
     if(lcm(d1,d2)>36){d1=2;d2=3;}
     const n1=randomInt(-9,9)||1,n2=randomInt(-9,9)||-1,add=Math.random()<0.5;
     const num=add?n1*d2+n2*d1:n1*d2-n2*d1,den=d1*d2;
-    q={text:`${n1}/${d1} ${add?"+":"-"} ${n2}/${d2}`,answer:{kind:"fraction",num,den,value:num/den},answerDisplay:simplifyFraction(num,den),category:"fractions",subcategory:"fractions_denominateurs_differents"};
+    q={text:formatFractionOperation(n1,d1,add?"+":"-",n2,d2),answer:{kind:"fraction",num,den,value:num/den},answerDisplay:simplifyFraction(num,den),category:"fractions",subcategory:"fractions_denominateurs_differents"};
   // ── Pourcentages ──────────────────────────────────────────────────────────
   } else {
     q=genExpertPercentQuestion();
@@ -1054,7 +1161,7 @@ const SUBCATEGORY_GENERATORS = {
   fractions_meme_denominateur: () => {
     const d=randomInt(2,9),n1=randomInt(-9,9)||2,n2=randomInt(-9,9)||-3,add=Math.random()<0.5;
     const num=add?n1+n2:n1-n2;
-    return {text:`${n1}/${d} ${add?"+":"-"} ${n2}/${d}`,answer:{kind:"fraction",num,den:d,value:num/d},answerDisplay:simplifyFraction(num,d),timeLimit:getTimeLimit("intermediate","fractions_meme_denominateur"),category:"fractions",subcategory:"fractions_meme_denominateur"};
+    return {text:formatFractionOperation(n1,d,add?"+":"-",n2,d),answer:{kind:"fraction",num,den:d,value:num/d},answerDisplay:simplifyFraction(num,d),timeLimit:getTimeLimit("intermediate","fractions_meme_denominateur"),category:"fractions",subcategory:"fractions_meme_denominateur"};
   },
   // ── Nombres relatifs ──────────────────────────────────────────────────────
   addition_relatifs:       () => { const a=randomInt(-99,99)||1,b=randomInt(-99,99)||1; return {text:`${formatSigned(a)} + ${formatSigned(b)}`,answer:{kind:"number",value:a+b},answerDisplay:String(a+b),timeLimit:getTimeLimit("intermediate","addition_relatifs"),category:"addition",subcategory:"addition_relatifs"}; },
@@ -1168,7 +1275,7 @@ function updateRankUI(){
   const rankNextHintEl = document.getElementById("rankNextHint");
 
   // Affiche le XP total brut dans le stat box
-  if(xpTotalEl) xpTotalEl.textContent = xp;
+  if(xpTotalEl && gameMode === "general") xpTotalEl.textContent = xp;
 
   // Barre de progression relative au rang actuel
   const isMax = newIndex >= RANKS.length - 1;
@@ -1207,6 +1314,11 @@ function updateRankUI(){
 // ── Bonus multiplicateur x2 ───────────────────────────────────────────────
 function renderXpMultBadge(){
   const badge = document.getElementById("xpMultBadge");
+  if (gameMode === "targeted") {
+    document.body.classList.remove("bonus-x2");
+    if (badge) badge.classList.add("hidden");
+    return;
+  }
   if(xpMultiplier === 2){
     console.log("[bonus-x2] bonus actif", { level: xpMultiplierLevelKey });
     document.body.classList.add("bonus-x2");
@@ -1414,6 +1526,10 @@ async function recalibrateCurrentStudentXp(reason = "manual") {
 
 function syncXpFromServerQuietly(reason = "background") {
   if (typeof _qClient === "undefined" || typeof syncStudentFromSupabase !== "function") return;
+  if (_offlineQueue.length > 0) {
+    console.log("[progress] sync serveur différée — réponses hors ligne en attente", { reason, queueLength: _offlineQueue.length });
+    return;
+  }
   _qClient.auth.getUser()
     .then(({ data, error }) => {
       if (error) {
@@ -1429,6 +1545,7 @@ function syncXpFromServerQuietly(reason = "background") {
 }
 
 function submitAnswerInBackground(args, rollbackSnapshot) {
+  const ownerAuthUserId = getActiveStorageUserId();
   pendingSupabaseSaves++;
   console.log("[progress] sauvegarde réponse en arrière-plan", {
     pendingSupabaseSaves,
@@ -1441,6 +1558,14 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
 
   const runSave = async () => {
     try {
+      const currentAuthUserId = getActiveStorageUserId();
+      if (ownerAuthUserId && currentAuthUserId && ownerAuthUserId !== currentAuthUserId) {
+        console.warn("[offline-queue] sauvegarde abandonnée — le compte actif a changé", {
+          ownerAuthUserId,
+          currentAuthUserId
+        });
+        return false;
+      }
       let saved = await saveQuestionResult(...args);
       if (!saved) {
         console.warn("[progress] submit_answer échec — retry court");
@@ -1455,7 +1580,7 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
           online: navigator.onLine,
           queueLength: _offlineQueue.length + 1
         });
-        _enqueueOfflineSave(args);
+        _enqueueOfflineSave(args, ownerAuthUserId);
         syncXpFromServerQuietly("submit_answer_failed");
         return false;
       }
@@ -1467,7 +1592,7 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
         online: navigator.onLine,
         queueLength: _offlineQueue.length + 1
       });
-      _enqueueOfflineSave(args);
+      _enqueueOfflineSave(args, ownerAuthUserId);
       syncXpFromServerQuietly("submit_answer_exception");
       return false;
     } finally {
@@ -1498,7 +1623,7 @@ function showSyncBanner(state) {
 }
 
 // ── Queue de sauvegardes offline + retry ────────────────────────────────────
-function _enqueueOfflineSave(args) {
+function _enqueueOfflineSave(args, ownerAuthUserId = getActiveStorageUserId()) {
   if (!activeLocalSeriesId) activeLocalSeriesId = createLocalSeriesId();
   _offlineQueue.push({
     args,
@@ -1506,7 +1631,8 @@ function _enqueueOfflineSave(args) {
     localSeriesId: activeLocalSeriesId,
     sessionId: activeSessionForQuiz,
     refreshPenaltyPending: _refreshPenaltyPending,
-    refreshPenaltyApplied: _refreshPenaltyApplied
+    refreshPenaltyApplied: _refreshPenaltyApplied,
+    ownerAuthUserId
   });
   showSyncBanner("pending");
   if (!_retryTimerId) {
@@ -1530,6 +1656,15 @@ async function _flushOfflineQueue() {
   try {
     while (_offlineQueue.length > 0) {
       const item = _offlineQueue[0];
+      const currentAuthUserId = getActiveStorageUserId();
+      if (item.ownerAuthUserId && currentAuthUserId && item.ownerAuthUserId !== currentAuthUserId) {
+        console.warn("[offline-queue] réponse d’un autre compte supprimée de la file", {
+          ownerAuthUserId: item.ownerAuthUserId,
+          currentAuthUserId
+        });
+        _offlineQueue.shift();
+        continue;
+      }
       activeSeriesId       = item.seriesId;
       activeLocalSeriesId  = item.localSeriesId;
       activeSessionForQuiz = item.sessionId;
@@ -1606,6 +1741,339 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = "";
   }
 });
+
+function getEmptyTargetedProgress(){
+  return Object.fromEntries(TARGETED_DIFFICULTY_ORDER.map(key => [key, { xp: 0, completed: false, completedAt: null }]));
+}
+
+function applyTargetedProgressSnapshot(progressBySkill){
+  targetedProgressBySkill = progressBySkill || {};
+  targetedProgressLoaded = true;
+  targetedProgress = targetedSkillKey
+    ? targetedProgressBySkill[targetedSkillKey] || getEmptyTargetedProgress()
+    : {};
+}
+
+function waitForTargetedProgress(promise, timeoutMs = TARGETED_PROGRESS_TIMEOUT_MS){
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error("Le chargement de la progression a expiré.")), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
+function renderTargetedProgressLoadState(){
+  if (gameMode !== "targeted") return;
+  renderTargetedHeaderXp();
+  if (!targetedSkillKey || !targetedDifficultyListEl) return;
+
+  if (targetedProgressLoaded) {
+    targetedProgress = targetedProgressBySkill[targetedSkillKey] || getEmptyTargetedProgress();
+    renderTargetedProgress();
+    return;
+  }
+
+  const message = targetedProgressLoading
+    ? '<div class="targeted-loading">Chargement de la progression…</div>'
+    : '<div class="targeted-error">Impossible de charger la progression. Réessaie dans un instant.</div>';
+  targetedDifficultyListEl.innerHTML = message;
+}
+
+async function refreshTargetedProgressFromSupabase(student = null, { reason = "unknown", timeoutMs = TARGETED_PROGRESS_TIMEOUT_MS } = {}){
+  const requestVersion = ++targetedProgressRequestVersion;
+  const authUserId = window._currentAuthUserId || null;
+  const startedAt = targetedUiNow();
+  targetedProgressLoading = true;
+  targetedProgressLoadError = null;
+  renderTargetedProgressLoadState();
+  targetedUiDebugLog({ phase: "progress_refresh_start", reason, request_version: requestVersion });
+
+  try {
+    const currentStudent = student || await window.saveStudent?.(pseudo);
+    if (!currentStudent) throw new Error("Élève introuvable");
+    const progressBySkill = await waitForTargetedProgress(
+      window.loadAllTargetedProgress(currentStudent.id),
+      timeoutMs
+    );
+    const stale = requestVersion !== targetedProgressRequestVersion || authUserId !== (window._currentAuthUserId || null);
+    if (stale) {
+      targetedUiDebugLog({ phase: "progress_refresh_stale", reason, request_version: requestVersion });
+      return targetedProgressBySkill;
+    }
+    targetedStudentId = currentStudent.id;
+    applyTargetedProgressSnapshot(progressBySkill);
+    targetedUiDebugLog({
+      phase: "progress_refresh_success",
+      reason,
+      request_version: requestVersion,
+      duration_ms: Math.round((targetedUiNow() - startedAt) * 10) / 10
+    });
+    return progressBySkill;
+  } catch(error) {
+    if (requestVersion !== targetedProgressRequestVersion) {
+      targetedUiDebugLog({ phase: "progress_refresh_stale_error", reason, request_version: requestVersion });
+      return targetedProgressBySkill;
+    }
+    targetedProgressLoadError = error;
+    console.error("[TARGETED] progression refresh failed", {
+      reason,
+      request_version: requestVersion,
+      message: error?.message || String(error),
+      error
+    });
+    throw error;
+  } finally {
+    if (requestVersion === targetedProgressRequestVersion) {
+      targetedProgressLoading = false;
+      renderTargetedProgressLoadState();
+      targetedUiDebugLog({
+        phase: "progress_refresh_finished",
+        reason,
+        request_version: requestVersion,
+        loaded: targetedProgressLoaded,
+        has_error: !!targetedProgressLoadError,
+        duration_ms: Math.round((targetedUiNow() - startedAt) * 10) / 10
+      });
+    }
+  }
+}
+
+function isTargetedDifficultyUnlocked(difficulty){
+  if (difficulty === "beginner") return true;
+  if (difficulty === "intermediate") return targetedProgress.beginner?.completed === true;
+  return targetedProgress.intermediate?.completed === true;
+}
+
+function getCurrentTargetedDifficultyXp(){
+  if (!targetedSkillKey || !targetedDifficulty) return null;
+  const xpMax = TARGETED_SKILLS[targetedSkillKey]?.difficulties?.[targetedDifficulty]?.xpMax ?? 500;
+  const difficultyProgress = targetedProgressBySkill[targetedSkillKey]?.[targetedDifficulty];
+  return Math.max(0, Math.min(xpMax, Number(difficultyProgress?.xp) || 0));
+}
+
+function renderTargetedHeaderXp(){
+  if (gameMode !== "targeted" || !xpTotalEl) return;
+  const difficultyXp = getCurrentTargetedDifficultyXp();
+  if (difficultyXp == null) {
+    xpTotalEl.textContent = "—";
+    return;
+  }
+  xpTotalEl.textContent = targetedProgressLoaded
+    ? String(difficultyXp)
+    : targetedProgressLoading ? "…" : "—";
+}
+
+function renderTargetedSkillList(){
+  if (!targetedSkillListEl) return;
+  targetedSkillListEl.innerHTML = Object.values(TARGETED_SKILLS).map(skill => `
+    <button class="targeted-skill-btn" type="button" data-skill-key="${skill.key}">
+      <span class="targeted-skill-icon" aria-hidden="true">${skill.icon || "•"}</span>
+      <span><strong>${skill.label}</strong><small>${skill.description}</small></span>
+    </button>
+  `).join("");
+  targetedSkillListEl.querySelectorAll("[data-skill-key]").forEach(button => {
+    button.addEventListener("click", () => openTargetedSkill(button.dataset.skillKey));
+  });
+}
+
+function renderTargetedProgress(){
+  if (!targetedSkillKey || !targetedDifficultyListEl) return;
+  const skill = TARGETED_SKILLS[targetedSkillKey];
+  if (!skill) return;
+  if (targetedSkillTitleEl) targetedSkillTitleEl.textContent = skill.label;
+
+  const mastered = TARGETED_DIFFICULTY_ORDER.every(key => targetedProgress[key]?.completed === true);
+  if (targetedMasteredEl) targetedMasteredEl.textContent = `${skill.label} maîtrisé ✓`;
+  targetedMasteredEl?.classList.toggle("hidden", !mastered);
+  targetedDifficultyListEl.innerHTML = TARGETED_DIFFICULTY_ORDER.map((difficulty, index) => {
+    const config = skill.difficulties[difficulty];
+    const progress = targetedProgress[difficulty] || { xp: 0, completed: false };
+    const xpValue = Math.max(0, Math.min(config.xpMax, Number(progress.xp) || 0));
+    const completed = progress.completed === true;
+    const unlocked = isTargetedDifficultyUnlocked(difficulty);
+    const previousLabel = index > 0 ? skill.difficulties[TARGETED_DIFFICULTY_ORDER[index - 1]].label : "";
+    const status = completed
+      ? "✓ Maîtrisé · Rejouable sans gain d’XP"
+      : unlocked ? `${xpValue} / ${config.xpMax} XP` : `Termine ${previousLabel} pour débloquer ce niveau`;
+    return `
+      <button class="targeted-difficulty ${completed ? "completed" : ""} ${unlocked ? "" : "locked"}"
+        type="button" data-targeted-difficulty="${difficulty}" ${unlocked ? "" : "disabled"}>
+        <span class="targeted-difficulty-head"><strong>${config.label}</strong><span>${unlocked ? `${xpValue} / ${config.xpMax} XP` : "🔒"}</span></span>
+        <span class="targeted-progress-track" aria-hidden="true"><span style="width:${xpValue / config.xpMax * 100}%"></span></span>
+        <small>${status}</small>
+      </button>
+    `;
+  }).join("");
+
+  targetedDifficultyListEl.querySelectorAll("[data-targeted-difficulty]").forEach(button => {
+    button.addEventListener("click", () => beginTargetedQuiz(button.dataset.targetedDifficulty));
+  });
+
+  renderTargetedHeaderXp();
+}
+
+function resetQuizSurfaceForMode(mode){
+  clearInterval(timerInterval); timerInterval = null;
+  clearCountdown();
+  quizStarted = false;
+  isSubmitting = false;
+  setQuestionLock(true);
+  answerInputEl.classList.add("hidden");
+  validateBtnEl.classList.add("hidden");
+  restartBtnEl.classList.add("hidden");
+  $("keypad").classList.add("hidden");
+  document.querySelector(".main-card")?.classList.remove("keypad-open");
+  resultEl.textContent = "";
+  feedbackEl.className = "feedback";
+  feedbackEl.textContent = "";
+  questionCountEl.textContent = "0/0";
+  timerEl.textContent = "15";
+  scoreEl.textContent = "0";
+  if (mode === "targeted") {
+    selectedLevelEl.textContent = "Entraînement ciblé";
+    questionEl.textContent = "Choisis une compétence";
+    helperEl.textContent = "";
+    renderTargetedHeaderXp();
+  } else {
+    selectedLevelEl.textContent = "Niveau : aucun";
+    questionEl.textContent = "Sélectionne un niveau pour commencer";
+    helperEl.textContent = "30 secondes uniquement pour certaines additions/soustractions de fractions à dénominateurs différents.";
+    xpTotalEl.textContent = String(xp);
+  }
+}
+
+function setGameMode(mode, { force = false } = {}){
+  if (!force && (quizStarted || isStartingQuiz)) return false;
+  gameMode = mode === "targeted" ? "targeted" : "general";
+  document.body.classList.toggle("targeted-mode", gameMode === "targeted");
+  modeGeneralBtnEl?.classList.toggle("active", gameMode === "general");
+  modeTargetedBtnEl?.classList.toggle("active", gameMode === "targeted");
+  modeGeneralBtnEl?.setAttribute("aria-selected", String(gameMode === "general"));
+  modeTargetedBtnEl?.setAttribute("aria-selected", String(gameMode === "targeted"));
+  generalLevelsPanelEl?.classList.toggle("hidden", gameMode !== "general");
+  targetedMenuEl?.classList.toggle("hidden", gameMode !== "targeted");
+  if (targetedSkillListEl) targetedSkillListEl.classList.toggle("hidden", gameMode !== "targeted" || !!targetedSkillKey);
+  if (targetedSkillPanelEl) targetedSkillPanelEl.classList.toggle("hidden", gameMode !== "targeted" || !targetedSkillKey);
+  if (xpTotalLabelEl) xpTotalLabelEl.textContent = gameMode === "targeted" ? "XP ciblée" : "XP Total";
+  renderXpMultBadge();
+  if (gameMode === "general") {
+    updateRankUI();
+    updateLevelButtons();
+  } else if (targetedDifficulty) {
+    renderTargetedProgress();
+  }
+  if (!quizStarted) resetQuizSurfaceForMode(gameMode);
+  return true;
+}
+
+async function enterTargetedMode(){
+  if (!setGameMode("targeted")) return false;
+  try {
+    await refreshTargetedProgressFromSupabase(null, { reason: "enter_targeted_mode" });
+    return true;
+  } catch(e) {
+    console.error("[targeted] chargement du total ciblé impossible:", e);
+    return false;
+  }
+}
+
+async function openTargetedSkill(skillKey){
+  const skill = TARGETED_SKILLS[skillKey];
+  if (!skill || quizStarted) return;
+  targetedSkillKey = skillKey;
+  targetedDifficulty = null;
+  targetedProgress = targetedProgressBySkill[skillKey] || getEmptyTargetedProgress();
+  targetedSkillListEl?.classList.add("hidden");
+  targetedSkillPanelEl?.classList.remove("hidden");
+  try {
+    await refreshTargetedProgressFromSupabase(null, { reason: `open_skill:${skillKey}` });
+  } catch(e) {
+    console.error("[targeted] ouverture compétence impossible:", e);
+  }
+}
+
+function closeTargetedSkill(){
+  if (quizStarted) return;
+  targetedSkillKey = null;
+  targetedDifficulty = null;
+  targetedSkillPanelEl?.classList.add("hidden");
+  targetedSkillListEl?.classList.remove("hidden");
+  resetQuizSurfaceForMode("targeted");
+}
+
+async function beginTargetedQuiz(difficulty){
+  if (isStartingQuiz || quizStarted || !targetedSkillKey || !isTargetedDifficultyUnlocked(difficulty)) return;
+  isStartingQuiz = true;
+  setQuestionLock(true);
+  showCountdown(async () => {
+    try {
+      await startTargetedQuiz({ difficulty });
+    } finally {
+      isStartingQuiz = false;
+    }
+  });
+}
+
+async function startTargetedQuiz({ difficulty, resumeState = null }){
+  const skillKey = resumeState?.skillKey || targetedSkillKey;
+  const selectedDifficulty = resumeState?.difficulty || difficulty;
+  const skill = TARGETED_SKILLS[skillKey];
+  if (!skill?.difficulties?.[selectedDifficulty]) return false;
+
+  const student = await window.saveStudent?.(pseudo);
+  if (!student) {
+    showLoadingState("Connexion requise pour lancer cet entraînement.", true);
+    return false;
+  }
+  targetedStudentId = student.id;
+  targetedSkillKey = skillKey;
+  targetedDifficulty = selectedDifficulty;
+  try {
+    await refreshTargetedProgressFromSupabase(student, { reason: resumeState ? "resume_series" : "start_series" });
+  } catch(error) {
+    if (!targetedProgressLoaded) {
+      showLoadingState("Impossible de charger la progression ciblée.", true);
+      return false;
+    }
+    console.warn("[targeted] démarrage avec le dernier état confirmé:", error);
+  }
+  targetedProgress = targetedProgressBySkill[skillKey] || getEmptyTargetedProgress();
+  setGameMode("targeted", { force: true });
+
+  if (resumeState) {
+    questions = resumeState.questions.map(normalizeQuestion);
+    currentQuestionIndex = Number(resumeState.questionIndex) || 0;
+    score = Number(resumeState.score) || 0;
+    _seriesTimes = resumeState.seriesTimes || [];
+    activeTargetedSeriesId = resumeState.targetedSeriesId || null;
+    targetedSeriesXp = Number(resumeState.seriesXp) || 0;
+  } else {
+    const startingDifficultyXp = targetedProgress[selectedDifficulty]?.xp || 0;
+    questions = generateTargetedQuestions(skillKey, selectedDifficulty, 10, startingDifficultyXp).map(normalizeQuestion);
+    currentQuestionIndex = 0;
+    score = 0;
+    _seriesTimes = [];
+    activeTargetedSeriesId = null;
+    targetedSeriesXp = 0;
+  }
+
+  targetedMenuEl?.classList.add("hidden");
+  showPenaltyBanner(false);
+  updateStreak(0);
+  quizStarted = true;
+  isSubmitting = false;
+  scoreEl.textContent = String(score);
+  resultEl.textContent = "";
+  answerInputEl.classList.remove("hidden");
+  validateBtnEl.classList.remove("hidden");
+  restartBtnEl.classList.add("hidden");
+  $("keypad").classList.remove("hidden");
+  saveTargetedSeriesState();
+  renderTargetedProgress();
+  showQuestion();
+  return true;
+}
+
 function startTimer(){
   clearInterval(timerInterval);
   timerEl.classList.remove("timer-critical");
@@ -1626,15 +2094,35 @@ function startTimer(){
     if(timeLeft <= 0){ clearInterval(timerInterval); timerInterval = null; handleTimeout(); }
   }, 200); // haute fréquence pour précision, pas de dérive
 }
+
+function restoreAnswerFocusForNewQuestion(){
+  if (isTouchDevice && !answerHardwareKeyboardUsed) return;
+  setTimeout(() => {
+    if (!quizStarted || questionLocked || currentQuestionIndex >= questions.length) return;
+    if (answerInputEl.disabled || answerInputEl.classList.contains("hidden")) return;
+    try { answerInputEl.focus(); } catch(e) {}
+  }, 80);
+}
+
 function showQuestion(){
-  if(currentQuestionIndex >= questions.length) return endQuiz();
+  if(currentQuestionIndex >= questions.length) {
+    return gameMode === "targeted" ? endTargetedQuiz() : endQuiz();
+  }
   hideLoadingState();
   const q = questions[currentQuestionIndex];
   currentAnswer = q.answer.value;
   currentAnswerDisplay = valueToDisplay(q.answer);
   currentTimeLimit = q.timeLimit || 15;
-  selectedLevelEl.textContent = "Niveau : " + currentLevel.name;
-  questionEl.textContent = q.text + " = ?";
+  if (gameMode === "targeted") {
+    const skill = TARGETED_SKILLS[targetedSkillKey];
+    const difficulty = skill?.difficulties?.[targetedDifficulty];
+    selectedLevelEl.textContent = `${skill?.label || "Entraînement ciblé"} · ${difficulty?.label || ""}`;
+  } else {
+    selectedLevelEl.textContent = "Niveau : " + currentLevel.name;
+  }
+  if (!window.LevelingMathRenderer?.renderQuestion(questionEl, q.text)) {
+    questionEl.textContent = q.text + " = ?";
+  }
   helperEl.textContent = `Question ${currentQuestionIndex+1} sur ${questions.length} • Temps : ${currentTimeLimit}s${q.hint ? ' • ' + q.hint : ''}`;
   questionCountEl.textContent = `${currentQuestionIndex+1}/${questions.length}`;
   scoreEl.textContent = score;
@@ -1649,11 +2137,7 @@ function showQuestion(){
   // Animation d'entrée de la carte question
   const qCard = document.querySelector(".question-card");
   if(qCard){ qCard.classList.remove("challenge-complete","question-enter","flash-good","flash-bad","shake"); qCard.getBoundingClientRect(); qCard.classList.add("question-enter"); }
-  // Focus uniquement sur desktop — sur touch, focus() déclenche le clavier
-  // natif iOS même avec inputmode="none" sur certaines versions Safari.
-  if (!isTouchDevice) {
-    setTimeout(() => { try { answerInputEl.focus(); } catch(e){} }, 80);
-  }
+  restoreAnswerFocusForNewQuestion();
   startTimer();
 }
 function isFinishedQuizState(){
@@ -1792,7 +2276,202 @@ function showCorrectionAndContinue(){
     showQuestion();
   }, 1400);
 }
+
+function updateTargetedProgressFromRpc(result){
+  targetedProgress = targetedProgress && Object.keys(targetedProgress).length
+    ? targetedProgress
+    : getEmptyTargetedProgress();
+  const current = targetedProgress[targetedDifficulty] || { xp: 0, completed: false, completedAt: null };
+  const xpMax = TARGETED_SKILLS[targetedSkillKey]?.difficulties?.[targetedDifficulty]?.xpMax ?? 500;
+  current.xp = Math.max(0, Math.min(xpMax, result.difficulty_xp));
+  current.completed = current.completed || result.difficulty_completed === true || current.xp >= xpMax;
+  targetedProgress[targetedDifficulty] = current;
+  targetedProgressBySkill[targetedSkillKey] = targetedProgress;
+  targetedProgressLoaded = true;
+  targetedProgressLoadError = null;
+  if (result.beginner_completed === true) targetedProgress.beginner.completed = true;
+  if (result.intermediate_completed === true) targetedProgress.intermediate.completed = true;
+  if (result.skill_mastered === true) {
+    TARGETED_DIFFICULTY_ORDER.forEach(key => { targetedProgress[key].completed = true; });
+  }
+  renderTargetedProgress();
+}
+
+function continueTargetedAfterFeedback(delay, nextQuestionIndex, interactionStartedAt){
+  setTimeout(() => {
+    const renderStartedAt = targetedUiNow();
+    currentQuestionIndex = nextQuestionIndex;
+    showQuestion();
+    targetedUiDebugLog({
+      phase: "next_question_render",
+      duration_ms: Math.round((targetedUiNow() - renderStartedAt) * 10) / 10,
+      since_validation_ms: Math.round((targetedUiNow() - interactionStartedAt) * 10) / 10
+    });
+  }, Math.max(0, delay));
+}
+
+function showTargetedWrongCorrection(question, equivalentButNotReduced = false){
+  const steps = Array.isArray(question.correctionSteps) ? question.correctionSteps.filter(Boolean) : [];
+  feedbackEl.className = "feedback correction targeted-correction";
+  feedbackEl.textContent = equivalentButNotReduced
+    ? `Forme réduite attendue : ${question.answerDisplay}`
+    : steps.length
+      ? `Correction :\n${question.text}\n${steps.map(step => `= ${step}`).join("\n")}\nRéponse attendue : ${question.answerDisplay}`
+      : `Réponse attendue : ${question.answerDisplay}`;
+  triggerFeedbackAnim();
+  triggerFlash("bad");
+  return steps.length ? 3300 : 1600;
+}
+
+function showImmediateTargetedFeedback(question, isCorrect, interactionStartedAt, equivalentButNotReduced = false){
+  const renderStartedAt = targetedUiNow();
+  let minDisplayMs;
+  if (isCorrect) {
+    playCorrectSound();
+    feedbackEl.className = "feedback feedback-good";
+    feedbackEl.textContent = "Bonne réponse !";
+    triggerFeedbackAnim();
+    triggerFlash("good");
+    minDisplayMs = 700;
+  } else {
+    playWrongSound();
+    minDisplayMs = showTargetedWrongCorrection(question, equivalentButNotReduced);
+  }
+  const shownAt = targetedUiNow();
+  targetedUiDebugLog({
+    phase: "immediate_feedback_render",
+    duration_ms: Math.round((shownAt - renderStartedAt) * 10) / 10,
+    since_validation_ms: Math.round((shownAt - interactionStartedAt) * 10) / 10
+  });
+  return { shownAt, minDisplayMs };
+}
+
+async function submitTargetedResponse({ isCorrect, userAnswer, responseTime, equivalentButNotReduced = false, interactionStartedAt = targetedUiNow() }){
+  if (isSubmitting || gameMode !== "targeted" || !quizStarted) return;
+  const question = normalizeQuestion(questions[currentQuestionIndex]);
+  if (!question) return;
+
+  isSubmitting = true;
+  setQuestionLock(true);
+  clearInterval(timerInterval); timerInterval = null;
+  timerEl.classList.remove("timer-critical");
+  pendingSupabaseSaves++;
+  const immediateFeedback = showImmediateTargetedFeedback(question, isCorrect, interactionStartedAt, equivalentButNotReduced);
+  try {
+    const rpcCallStartedAt = targetedUiNow();
+    const result = await window.submitTargetedAnswer({
+      studentId: targetedStudentId,
+      seriesId: activeTargetedSeriesId,
+      skillKey: targetedSkillKey,
+      difficulty: targetedDifficulty,
+      subskillKey: question.subskillKey || question.subcategory,
+      questionText: question.text,
+      expectedAnswer: question.answerDisplay,
+      userAnswer,
+      isCorrect,
+      responseTime
+    });
+    targetedUiDebugLog({
+      phase: "submit_targeted_answer_with_identity",
+      duration_ms: Math.round((targetedUiNow() - rpcCallStartedAt) * 10) / 10
+    });
+
+    const serverRenderStartedAt = targetedUiNow();
+    activeTargetedSeriesId = result.series_id;
+    targetedSeriesXp = result.series_xp;
+    score = result.series_correct_count;
+    const nextQuestionIndex = result.series_question_count;
+    if (Number.isFinite(responseTime)) _seriesTimes.push(responseTime);
+    updateTargetedProgressFromRpc(result);
+    if (nextQuestionIndex < questions.length) {
+      const difficultyXp = targetedProgress[targetedDifficulty]?.xp || 0;
+      questions[nextQuestionIndex] = normalizeQuestion(
+        generateTargetedQuestion(targetedSkillKey, targetedDifficulty, difficultyXp, {
+          previousQuestions: questions.slice(0, nextQuestionIndex),
+          questionIndex: nextQuestionIndex,
+          questionCount: questions.length
+        })
+      );
+    }
+    scoreEl.textContent = String(score);
+    updateSeriesProgress();
+
+    // L'index suivant et le series_id confirmé sont persistés avant l'animation.
+    saveTargetedSeriesState(nextQuestionIndex);
+    const xpDelta = result.xp_delta;
+    if (isCorrect) {
+      feedbackEl.textContent = xpDelta > 0 ? `Bonne réponse ! +${xpDelta} XP` : "Bonne réponse !";
+    }
+    const serverRenderedAt = targetedUiNow();
+    targetedUiDebugLog({
+      phase: "server_confirmation_render",
+      duration_ms: Math.round((serverRenderedAt - serverRenderStartedAt) * 10) / 10,
+      difficulty_xp: result.difficulty_xp
+    });
+    const remainingFeedbackMs = immediateFeedback.minDisplayMs - (serverRenderedAt - immediateFeedback.shownAt);
+    continueTargetedAfterFeedback(remainingFeedbackMs, nextQuestionIndex, interactionStartedAt);
+  } catch(e) {
+    const retrySafe = e?.retrySafe !== false;
+    console.error("[TARGETED] submit failed", {
+      message: e?.message || String(e),
+      retrySafe,
+      error: e
+    });
+    feedbackEl.className = "feedback correction";
+    feedbackEl.textContent = retrySafe
+      ? `Réponse non enregistrée : ${e?.message || "erreur Supabase"} Tu peux réessayer.`
+      : `Confirmation serveur incertaine : ${e?.message || "réponse Supabase invalide"} Recharge la page avant de continuer.`;
+    setQuestionLock(!retrySafe);
+  } finally {
+    pendingSupabaseSaves = Math.max(0, pendingSupabaseSaves - 1);
+    isSubmitting = false;
+  }
+}
+
+async function checkTargetedAnswer(){
+  if (!quizStarted || questionLocked || isSubmitting) return;
+  const input = answerInputEl.value.trim();
+  if (!input) {
+    feedbackEl.className = "feedback";
+    feedbackEl.textContent = "Entre une réponse.";
+    triggerFeedbackAnim();
+    return;
+  }
+  const interactionStartedAt = targetedUiNow();
+  const validationStartedAt = targetedUiNow();
+  const question = normalizeQuestion(questions[currentQuestionIndex]);
+  const mathematicallyEquivalent = areEquivalent(input, currentAnswer);
+  const requiresReducedForm = question?.category === "calcul_litteral" && currentAnswer?.kind === "polynomial";
+  const equivalentButNotReduced = requiresReducedForm
+    && mathematicallyEquivalent
+    && !isReducedPolynomialForm(input);
+  const isCorrect = mathematicallyEquivalent && !equivalentButNotReduced;
+  targetedUiDebugLog({
+    phase: "local_validation",
+    duration_ms: Math.round((targetedUiNow() - validationStartedAt) * 10) / 10,
+    equivalent_but_not_reduced: equivalentButNotReduced
+  });
+  const responseTime = _questionStartTime ? (Date.now() - _questionStartTime) / 1000 : null;
+  await submitTargetedResponse({
+    isCorrect,
+    userAnswer: input,
+    responseTime,
+    equivalentButNotReduced,
+    interactionStartedAt
+  });
+}
+
+async function handleTargetedTimeout(){
+  if (questionLocked || isSubmitting) return;
+  const responseTime = _questionStartTime ? (Date.now() - _questionStartTime) / 1000 : currentTimeLimit;
+  await submitTargetedResponse({ isCorrect: false, userAnswer: "", responseTime });
+}
+
 function handleTimeout(){
+  if (gameMode === "targeted") {
+    handleTargetedTimeout().catch(e => console.error("[targeted] timeout:", e));
+    return;
+  }
   if(questionLocked) return;
   setQuestionLock(true);
   clearInterval(timerInterval); timerInterval = null;
@@ -1827,6 +2506,7 @@ function handleTimeout(){
   showCorrectionAndContinue();
 }
 async function checkAnswer(){
+  if (gameMode === "targeted") return checkTargetedAnswer();
   if(!quizStarted || questionLocked || isSubmitting) return;
   const input = answerInputEl.value.trim();
   if(!input){
@@ -2011,6 +2691,82 @@ function buildCoachingFeedback(pct, avgTime) {
   </div>`;
 }
 
+function showTargetedProgressHome(){
+  if (quizStarted) return;
+  targetedDifficulty = null;
+  targetedMenuEl?.classList.remove("hidden");
+  targetedSkillListEl?.classList.add("hidden");
+  targetedSkillPanelEl?.classList.remove("hidden");
+  restartBtnEl.classList.add("hidden");
+  resultEl.textContent = "";
+  resultEl.classList.remove("challenge-result");
+  selectedLevelEl.textContent = "Entraînement ciblé";
+  questionEl.textContent = TARGETED_SKILLS[targetedSkillKey]?.label || "Choisis une compétence";
+  helperEl.textContent = "";
+  questionCountEl.textContent = "0/0";
+  timerEl.textContent = "15";
+  renderTargetedProgressLoadState();
+}
+
+function endTargetedQuiz(){
+  if (gameMode !== "targeted") return;
+  quizStarted = false;
+  isSubmitting = false;
+  clearInterval(timerInterval); timerInterval = null;
+  clearCountdown();
+  clearTargetedSeriesState();
+  timerEl.classList.remove("timer-critical");
+  timerEl.style.color = "white";
+  timerEl.textContent = "0";
+  progressFillEl.style.width = "100%";
+  const total = questions.length;
+  const avgTime = _seriesTimes.length
+    ? _seriesTimes.reduce((sum, value) => sum + value, 0) / _seriesTimes.length
+    : null;
+  const progress = targetedProgress[targetedDifficulty] || { xp: 0, completed: false };
+  const skill = TARGETED_SKILLS[targetedSkillKey];
+  const difficulty = skill?.difficulties?.[targetedDifficulty];
+  const xpMax = difficulty?.xpMax ?? 500;
+
+  selectedLevelEl.textContent = `${skill?.label || "Entraînement ciblé"} · ${difficulty?.label || ""}`;
+  questionEl.textContent = "Série terminée";
+  helperEl.textContent = progress.completed ? "Cette difficulté est maîtrisée et reste disponible à l’entraînement." : "Ta progression a été confirmée par Supabase.";
+  feedbackEl.className = "feedback feedback-good";
+  feedbackEl.textContent = progress.completed ? "Difficulté maîtrisée ✓" : "Continue comme ça !";
+  resultEl.innerHTML = `
+    <div class="result-panel">
+      <div class="result-panel-head">
+        <div class="result-kicker">Entraînement ciblé</div>
+        <div class="result-encouragement">${skill?.label || "Compétence"}</div>
+      </div>
+      <div class="result-metrics">
+        <div class="result-metric"><span class="label">Score</span><span class="value">${score}/${total}</span></div>
+        <div class="result-metric xp"><span class="label">XP de la série</span><span class="value">${targetedSeriesXp >= 0 ? "+" : ""}${targetedSeriesXp}</span></div>
+        <div class="result-metric"><span class="label">Progression</span><span class="value">${progress.xp}/${xpMax}</span></div>
+        <div class="result-metric"><span class="label">Temps moyen</span><span class="value">${avgTime == null ? "—" : `${avgTime.toFixed(1).replace(".", ",")} s`}</span></div>
+      </div>
+      <button class="secondary targeted-progress-return" id="targeted-progress-return" type="button">Voir la progression</button>
+    </div>`;
+  resultEl.classList.add("challenge-result");
+  answerInputEl.classList.add("hidden");
+  validateBtnEl.classList.add("hidden");
+  restartBtnEl.textContent = "↻ Rejouer";
+  restartBtnEl.classList.remove("hidden");
+  $("keypad").classList.add("hidden");
+  document.querySelector(".main-card")?.classList.remove("keypad-open");
+  setQuestionLock(true);
+  document.getElementById("targeted-progress-return")?.addEventListener("click", showTargetedProgressHome);
+
+  if (targetedStudentId) {
+    refreshTargetedProgressFromSupabase(
+      { id: targetedStudentId },
+      { reason: "series_complete" }
+    ).catch(error => {
+      console.error("[targeted] resynchronisation finale impossible, dernier état RPC conservé:", error);
+    });
+  }
+}
+
 function endQuiz(){
   hideLoadingState();
   quizStarted = false;
@@ -2116,7 +2872,15 @@ function endQuiz(){
     console.log("📤 Série finalisée localement — agrégats serveur gérés par submit_answer(), id:", activeSeriesId);
   }
   backgroundSaveChain
-    .then(() => recalibrateCurrentStudentXp("end_quiz"))
+    .then(() => {
+      if (_offlineQueue.length > 0) {
+        console.log("[xp-recalc] recalcul fin de série différé — réponses hors ligne en attente", {
+          queueLength: _offlineQueue.length
+        });
+        return null;
+      }
+      return recalibrateCurrentStudentXp("end_quiz");
+    })
     .catch(e => console.error("[xp-recalc] recalcul XP fin de série échoué:", e));
 }
 async function startQuiz({ forceNew = false } = {}){
@@ -2284,7 +3048,30 @@ async function selectLevel(levelKey){
 
 async function resumeSavedSeriesAfterReload(){
   if (quizStarted || isStartingQuiz) return false;
-  const savedState = loadSeriesState();
+  const generalState = loadSeriesState();
+  const targetedState = loadTargetedSeriesState();
+  const resumeTargeted = targetedState && (!generalState || (targetedState.savedAt || 0) > (generalState.savedAt || 0));
+
+  if (resumeTargeted) {
+    if (!TARGETED_SKILLS[targetedState.skillKey]?.difficulties?.[targetedState.difficulty]) return false;
+    console.log("[targeted] reprise automatique après rechargement", {
+      skillKey: targetedState.skillKey,
+      difficulty: targetedState.difficulty,
+      questionIndex: targetedState.questionIndex,
+      series_id: targetedState.targetedSeriesId,
+      storageKey: getTargetedSeriesStateStorageKey()
+    });
+    isStartingQuiz = true;
+    try {
+      setGameMode("targeted", { force: true });
+      await openTargetedSkill(targetedState.skillKey);
+      return await startTargetedQuiz({ resumeState: targetedState });
+    } finally {
+      isStartingQuiz = false;
+    }
+  }
+
+  const savedState = generalState;
   if (!savedState || !LEVELS[savedState.levelKey]) return false;
 
   console.log("[quiz-start] reprise automatique après rechargement", {
@@ -2306,19 +3093,33 @@ window.resumeSavedSeriesAfterReload = resumeSavedSeriesAfterReload;
 $("savePseudoBtn").addEventListener("click", savePseudo);
 
 $("soundBtn").addEventListener("click", () => { primeEmbeddedAudio(); toggleSound(); });
+modeGeneralBtnEl?.addEventListener("click", () => setGameMode("general"));
+modeTargetedBtnEl?.addEventListener("click", () => enterTargetedMode());
+$("targeted-back-btn")?.addEventListener("click", closeTargetedSkill);
 $("btn-beginner").addEventListener("click", async () => { primeEmbeddedAudio(); await primeWebAudio(); selectLevel("beginner"); });
 $("btn-intermediate").addEventListener("click", async () => { primeEmbeddedAudio(); await primeWebAudio(); selectLevel("intermediate"); });
 
 $("btn-expert").addEventListener("click", async () => { primeEmbeddedAudio(); await primeWebAudio(); selectLevel("expert"); });
 validateBtnEl.addEventListener("click", () => { primeEmbeddedAudio(); checkAnswer(); });
 restartBtnEl.addEventListener("click", async () => {
+  if (gameMode === "targeted" && targetedSkillKey && targetedDifficulty) {
+    primeEmbeddedAudio();
+    await primeWebAudio();
+    beginTargetedQuiz(targetedDifficulty);
+    return;
+  }
   if(currentLevelKey) {
     primeEmbeddedAudio();
     await primeWebAudio();
     beginQuizStart({ source: "replay", levelKey: currentLevelKey, forceNew: true });
   }
 });
-answerInputEl.addEventListener("keydown", e => { if(e.key === "Enter" && !questionLocked) { primeEmbeddedAudio(); checkAnswer(); } });
+answerInputEl.addEventListener("keydown", e => {
+  if (e.key !== "Enter" && e.key !== "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    answerHardwareKeyboardUsed = true;
+  }
+  if(e.key === "Enter" && !questionLocked) { primeEmbeddedAudio(); checkAnswer(); }
+});
 
 /* ── Détection appareils tactiles (mobile + iPad) ───────────────────────── */
 const isTouchDevice =
@@ -2343,80 +3144,27 @@ console.log('TOUCH DEBUG', {
 });
 
 /* ── Pavé numérique tactile ─────────────────────────────────────────────── */
-// Insère une chaîne à la position du curseur dans l'input.
-// Utilise pointerdown + preventDefault sur chaque bouton pour éviter que le
-// tap déplace le focus hors de l'input avant la lecture de selectionStart.
-function insertAtCursor(input, text) {
-  if (isTouchDevice) {
-    // iOS : pas de focus() — déclencherait le clavier natif même avec inputmode="none".
-    // Pas de tracking curseur non plus (selectionStart/End nécessitent le focus sur iOS).
-    // On ajoute simplement en fin de valeur.
-    input.value += text;
-    return;
-  }
-  const start = input.selectionStart ?? input.value.length;
-  const end   = input.selectionEnd   ?? input.value.length;
-  input.value = input.value.slice(0, start) + text + input.value.slice(end);
-  const pos = start + text.length;
-  input.focus();
-  input.setSelectionRange(pos, pos);
-}
-
 // Touches chiffres et symboles
 document.querySelectorAll(".kbtn[data-val]").forEach(btn => {
   btn.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     if(questionLocked) return;
     primeEmbeddedAudio();
-    insertAtCursor(answerInputEl, btn.dataset.val);
+    answerInputEl.insertText(btn.dataset.val);
   });
 });
-// Touche x²
-$("kbtnPow2").addEventListener("pointerdown", (e) => {
+// Touche xⁿ : insère un modèle MathLive avec l'exposant actif.
+$("kbtnPower").addEventListener("pointerdown", (e) => {
   e.preventDefault();
   if(questionLocked) return;
   primeEmbeddedAudio();
-  const input = answerInputEl;
-  if (isTouchDevice) {
-    // Touch : pas de focus ni cursor-tracking — juste ajouter en fin de valeur
-    input.value = input.value.trim() ? input.value + "^2" : "x^2";
-    return;
-  }
-  const val = input.value;
-  const pos = input.selectionStart ?? val.length;
-  const before = val.slice(0, pos);
-  const after = val.slice(pos);
-  if (!before.trim()) {
-    insertAtCursor(input, "x^2");
-  } else {
-    input.value = before + "^2" + after;
-    const newPos = pos + 2;
-    input.focus();
-    input.setSelectionRange(newPos, newPos);
-  }
+  answerInputEl.insertPowerTemplate();
 });
 // Touche effacer
 $("kbtnDel").addEventListener("pointerdown", (e) => {
   e.preventDefault();
   if (questionLocked) return;
-  if (isTouchDevice) {
-    // Touch : pas de focus() — supprime simplement le dernier caractère
-    answerInputEl.value = answerInputEl.value.slice(0, -1);
-    return;
-  }
-  const val   = answerInputEl.value;
-  const start = answerInputEl.selectionStart;
-  const end   = answerInputEl.selectionEnd;
-  if (start !== null && end !== null && start !== end) {
-    answerInputEl.value = val.slice(0, start) + val.slice(end);
-    answerInputEl.focus();
-    answerInputEl.setSelectionRange(start, start);
-  } else {
-    const newVal = val.slice(0, -1);
-    answerInputEl.value = newVal;
-    answerInputEl.focus();
-    answerInputEl.setSelectionRange(newVal.length, newVal.length);
-  }
+  answerInputEl.deleteBackward();
 });
 // Touche valider : déclenche la vérification
 $("kbtnOk").addEventListener("click", () => {
@@ -2435,6 +3183,8 @@ function updateLevelButtons(){
 }
 
 loadGame();
+renderTargetedSkillList();
+setGameMode("general", { force: true });
 renderXpMultBadge();
 renderPseudo();
 renderStats(null);
@@ -2538,6 +3288,7 @@ async function syncStudentFromSupabase(authUser = null) {
     statBestAvgTime = student.best_avg_time || null;
     statGames       = student.games_played  || 0;
     localSession    = remoteSession;
+    renderLevelingObjective(student.leveling_objective);
     console.log("[sync] ✅ État hydraté → pseudo:", pseudo,
       "| XP:", xp, "| bestScore:", bestScore,
       "| games:", statGames, "| session:", localSession);

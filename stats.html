@@ -204,6 +204,18 @@ body::after {
   box-shadow: 0 0 10px var(--cat-glow, transparent);
 }
 
+/* ── Progression de l'entraînement ciblé ───────────────────────────────── */
+.targeted-summary-list { border-top: 1px solid rgba(96,165,250,.18); }
+.targeted-summary-row { padding: 13px 0; border-bottom: 1px solid rgba(96,165,250,.14); }
+.targeted-summary-row.locked { opacity: .58; }
+.targeted-summary-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.targeted-summary-heading strong { min-width: 110px; font-size: 14px; }
+.targeted-summary-value { margin-left: auto; color: #dbeafe; font-size: 12px; font-weight: 800; }
+.targeted-summary-locked { color: #94a3b8; font-size: 11px; font-weight: 700; }
+.targeted-summary-track { height: 8px; overflow: hidden; border-radius: 4px; background: rgba(255,255,255,.08); }
+.targeted-summary-track > span { display: block; height: 100%; background: #38bdf8; }
+.targeted-summary-error { color: #fca5a5; font-size: 13px; }
+
 /* ── Historique des séries ──────────────────────────────────────────────── */
 .series-row {
   display: flex;
@@ -376,6 +388,11 @@ html, body, * { cursor: auto !important; }
       </div>
     </div>
 
+    <div class="section">
+      <div class="section-title">Entraînement ciblé · Calcul littéral</div>
+      <div id="targetedLiteralProgress" aria-live="polite"></div>
+    </div>
+
     <div class="section" id="seriesSection" style="display:none">
       <div class="section-title">Dernières séries</div>
       <div id="seriesList" style="display:flex;flex-direction:column;gap:8px">
@@ -396,6 +413,7 @@ html, body, * { cursor: auto !important; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config/levels.js"></script>
+<script src="js/app/targeted-progress-summary.js"></script>
 <script src="js/supabase/client.js"></script>
 <script src="js/supabase/students.js"></script>
 <script>
@@ -573,6 +591,22 @@ html, body, * { cursor: auto !important; }
       xp_displayed: (Number(student.xp_total) || 0) + (Number(student.manual_xp_bonus) || 0)
     });
     return student;
+  }
+
+  async function loadTargetedLiteralProgress() {
+    const mount = document.getElementById("targetedLiteralProgress");
+    if (!mount || !currentStudent) return;
+
+    const { data, error } = await _qClient
+      .from("targeted_skill_progress")
+      .select("difficulty, xp, completed")
+      .eq("student_id", currentStudent.id)
+      .eq("skill_key", "calcul_litteral");
+
+    if (error) console.error("[stats] progression ciblée impossible:", error);
+    LevelingMathTargetedProgressSummary.render(mount, data, {
+      errorMessage: error ? "Progression ciblée indisponible pour le moment." : ""
+    });
   }
 
   // ── Rendu initial vide ───────────────────────────────────────────────────
@@ -825,27 +859,29 @@ html, body, * { cursor: auto !important; }
       ? await window.saveStudent(pseudo) : null);
     if (!student) return;
 
-    // Charger les 10 dernières séries + les lignes question_results pour détecter les pénalités
-    const [{ data: series }, { data: penalties }] = await Promise.all([
-      _qClient.from("series_results")
-        .select("id, level, score, xp_gained, created_at")
-        .eq("student_id", student.id)
-        .eq("session", currentSession)
-        .order("created_at", { ascending: false })
-        .limit(10),
-      _qClient.from("question_results")
-        .select("series_id, xp_delta")
-        .eq("student_id", student.id)
-        .eq("session", currentSession)
-        .eq("category", "refresh_penalty")
-    ]);
+    const { data: series, error: seriesError } = await _qClient.from("series_results")
+      .select("id, level, score, xp_gained, created_at")
+      .eq("student_id", student.id)
+      .eq("session", currentSession)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (seriesError) {
+      console.error("[stats] dernières séries impossibles:", seriesError);
+      return;
+    }
 
     if (!series || series.length === 0) return;
 
     // XP net affiché par série depuis question_results, avec pénalités lues dans LEVELS.
-    const { data: allDeltas } = await _qClient.from("question_results")
+    const { data: allDeltas, error: deltaError } = await _qClient.from("question_results")
       .select("series_id, xp_delta, category, is_correct, user_answer")
       .in("series_id", series.map(s => s.id));
+
+    if (deltaError) {
+      console.error("[stats] XP des dernières séries impossible:", deltaError);
+      return;
+    }
 
     const xpBySeries = {};
     const levelBySeriesId = {};
@@ -858,7 +894,9 @@ html, body, * { cursor: auto !important; }
     });
 
     // Séries ayant une pénalité refresh
-    const penaltySeries = new Set((penalties || []).map(p => p.series_id));
+    const penaltySeries = new Set((allDeltas || [])
+      .filter(question => question.category === "refresh_penalty")
+      .map(question => question.series_id));
 
     // Rendu
     const levelLabel = { beginner: "⚔️ Débutant", intermediate: "🔥 Intermédiaire", expert: "💀 Expert" };
@@ -879,7 +917,7 @@ html, body, * { cursor: auto !important; }
       row.setAttribute("role", "button");
       row.setAttribute("aria-label", "Voir le détail de cette série");
       row.innerHTML = `
-        <span class="sr-level">${levelLabel[s.level] || s.level}</span>
+        <span class="sr-level">${escapeHtml(levelLabel[s.level] || s.level)}</span>
         <span class="sr-score">Score : <strong>${s.score ?? "—"}/10</strong></span>
         <span class="sr-xp" style="color:${xpColor}">XP net : ${xpDisplay}</span>
         ${hasPenalty ? `<span class="sr-penalty">🔄 −10 pénalité refresh</span>` : ""}
@@ -901,6 +939,7 @@ html, body, * { cursor: auto !important; }
   async function initStatsPage() {
     await loadStudentContext();
     await loadCategoryStats();
+    await loadTargetedLiteralProgress();
     await loadRecentSeries();
   }
 

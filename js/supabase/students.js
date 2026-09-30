@@ -96,6 +96,13 @@ window.saveStudent = async function saveStudent(pseudo) {
 
       if (existingRows && existingRows.length > 0) {
         const existing = existingRows[0];
+        if (authUserId && existing.auth_user_id && existing.auth_user_id !== authUserId) {
+          console.error("❌ Élève trouvé par pseudo mais lié à un autre compte Auth", {
+            student_id: existing.id,
+            requested_auth_user_id: authUserId
+          });
+          return null;
+        }
         if (authUserId && !existing.auth_user_id) {
           const { data: attached, error: attachError } = await _qClient
             .from("students")

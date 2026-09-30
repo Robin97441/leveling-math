@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Leveling Math</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.7/dist/katex.min.css" integrity="sha384-JctiRyLzXCrSoOOzFlSoWLdyzQl7OrrRnhyeBmzB6ZWtcjccUyc8lCQJqIbs3uQX" crossorigin="anonymous">
 <style>
 :root{
   --bg1:#071225; --bg2:#0d1e3c; --card:#18253fdd; --card2:#263452cc;
@@ -37,7 +38,7 @@ h1{margin:0;font-size:clamp(28px,7vw,54px);line-height:1.02;font-weight:900;lett
 .top-row{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;margin-bottom:12px}
 @media (max-width:700px){.top-row{grid-template-columns:1fr}}
 .pseudo-wrap{display:flex;gap:8px;flex-wrap:wrap}
-.pseudo-wrap input,.answer-zone input{border:none;outline:none;border-radius:16px;background:#f8fafc;color:#0f172a;font-weight:700}
+.pseudo-wrap input,.answer-zone input,.answer-zone math-field{border:none;outline:none;border-radius:16px;background:#f8fafc;color:#0f172a;font-weight:700}
 .pseudo-wrap input{flex:1;min-width:180px;padding:11px 13px;font-size:15px}
 .small-btn,.primary,.secondary,.level-btn{border:none;cursor:pointer;font-weight:800}
 .small-btn{border-radius:14px;padding:11px 13px;background:rgba(30,50,100,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:white;font-size:14px;border:1px solid rgba(96,165,250,.22);transition:box-shadow .2s,border-color .2s,transform .12s}
@@ -59,6 +60,36 @@ h1{margin:0;font-size:clamp(28px,7vw,54px);line-height:1.02;font-weight:900;lett
   background:linear-gradient(180deg,rgba(255,255,255,.10) 0%,rgba(255,255,255,0) 60%);
   pointer-events:none;
 }
+.mode-selector{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:5px;margin:2px 0 16px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);border-radius:12px}
+.mode-btn{min-height:44px;border:0;border-radius:8px;background:transparent;color:#94a3b8;font:inherit;font-size:14px;font-weight:900;cursor:pointer;transition:background .2s ease,color .2s ease,box-shadow .2s ease}
+.mode-btn.active{background:rgba(56,189,248,.16);color:#f8fafc;box-shadow:inset 0 0 0 1px rgba(125,211,252,.3)}
+.targeted-menu{margin-bottom:16px}
+.targeted-menu-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.targeted-menu-head h2{margin:0;font-size:20px;letter-spacing:0}
+.targeted-back-btn{width:38px;height:38px;display:inline-grid;place-items:center;border:1px solid rgba(148,163,184,.22);border-radius:8px;background:rgba(255,255,255,.05);color:#f8fafc;font-size:20px;cursor:pointer}
+.targeted-skill-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.targeted-skill-btn{display:flex;align-items:center;gap:12px;min-height:76px;padding:14px;text-align:left;border:1px solid rgba(34,211,238,.25);border-radius:12px;background:rgba(8,47,73,.45);color:#f8fafc;cursor:pointer}
+.targeted-skill-btn strong,.targeted-skill-btn small{display:block;letter-spacing:0}
+.targeted-skill-btn small{margin-top:4px;color:#a5f3fc;font-size:12px;line-height:1.35}
+.targeted-skill-icon{display:grid;place-items:center;flex:0 0 42px;height:42px;border-radius:8px;background:#facc15;color:#172554;font-size:18px;font-weight:950}
+.targeted-difficulty-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.targeted-difficulty{display:grid;gap:9px;min-height:128px;padding:14px;text-align:left;border:1px solid rgba(96,165,250,.2);border-radius:12px;background:rgba(15,23,42,.58);color:#f8fafc;cursor:pointer}
+.targeted-difficulty:hover:not(:disabled){border-color:rgba(34,211,238,.55);background:rgba(8,47,73,.5)}
+.targeted-difficulty.completed{border-color:rgba(74,222,128,.42);background:rgba(20,83,45,.27)}
+.targeted-difficulty.locked{opacity:.48;cursor:not-allowed;filter:grayscale(.6)}
+.targeted-difficulty-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:14px}
+.targeted-difficulty small{color:#94a3b8;font-size:11px;line-height:1.35;letter-spacing:0}
+.targeted-progress-track{height:9px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden}
+.targeted-progress-track>span{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#facc15);transition:width .3s ease}
+.targeted-mastered{margin:0 0 12px;padding:10px 12px;border:1px solid rgba(74,222,128,.35);border-radius:8px;background:rgba(20,83,45,.28);color:#bbf7d0;font-size:14px;font-weight:900;text-align:center}
+.targeted-loading,.targeted-error{padding:18px;text-align:center;color:#cbd5e1;font-size:14px}
+.targeted-error{color:#fecaca}
+.targeted-correction{white-space:pre-line;font-size:16px;line-height:1.55}
+.targeted-progress-return{margin:0 auto}
+body.targeted-mode .panel{grid-template-columns:minmax(0,1fr)}
+body.targeted-mode .main-card{max-width:980px;width:100%;margin:0 auto}
+body.targeted-mode .side-card{display:none}
+@media(max-width:700px){.targeted-skill-list,.targeted-difficulty-list{grid-template-columns:1fr}.mode-selector{grid-template-columns:1fr}.targeted-difficulty{min-height:112px}}
 .lvl-icon{font-size:26px;line-height:1;filter:drop-shadow(0 0 6px rgba(255,255,255,.4))}
 .lvl-name{font-size:15px;font-weight:900;letter-spacing:.02em}
 .lvl-sub{font-size:11px;font-weight:600;opacity:.78;letter-spacing:.04em;text-transform:uppercase}
@@ -80,6 +111,9 @@ h1{margin:0;font-size:clamp(28px,7vw,54px);line-height:1.02;font-weight:900;lett
 .question-card{background:rgba(5,15,45,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,.20);border-radius:22px;padding:22px 16px;min-height:220px;display:flex;flex-direction:column;justify-content:center;text-align:center;box-shadow:0 0 32px rgba(96,165,250,.07),inset 0 1px 0 rgba(255,255,255,.06);width:100%;max-width:100%;overflow:visible}
 .question-top{color:#bfdbfe;font-weight:700;margin-bottom:8px;font-size:14px}
 .question{font-size:clamp(24px,6vw,40px);font-weight:900;letter-spacing:0;margin:0 auto;line-height:1.25;word-break:break-word;overflow-wrap:anywhere;white-space:normal;width:100%;max-width:680px}
+.question.math-rendered{overflow:hidden;word-break:normal;overflow-wrap:normal}
+.question.math-rendered .katex-display{margin:0;width:100%}
+.question.math-rendered .katex{font-size:1em;max-width:100%}
 .helper{color:var(--muted);margin:10px auto 0;font-size:15px;line-height:1.45;white-space:normal;overflow-wrap:anywhere;width:100%;max-width:640px}
 .question-card.loading-state{min-height:220px;gap:12px}
 .question-card.loading-state .question{display:flex;align-items:center;justify-content:center;gap:12px;font-size:clamp(18px,4vw,24px);color:#bfdbfe}
@@ -109,9 +143,13 @@ h1{margin:0;font-size:clamp(28px,7vw,54px);line-height:1.02;font-weight:900;lett
 .question-card.challenge-complete .helper{font-size:clamp(14px,2.6vw,18px);line-height:1.4;max-width:620px;color:#dbeafe}
 .answer-zone{display:flex;gap:10px;margin-top:16px}
 @media (max-width:560px){.answer-zone{flex-direction:column}}
-.answer-zone input{flex:1;padding:15px 16px;font-size:20px;text-align:center;transition:border-color .15s,box-shadow .15s}
-.answer-zone input:focus{outline:none;border-color:rgba(56,189,248,.55);box-shadow:0 0 0 3px rgba(56,189,248,.14)}
-.answer-zone input:disabled{opacity:.65}
+.answer-zone input,.answer-zone math-field{flex:1;min-width:0;box-sizing:border-box;padding:15px 16px;font-size:20px;text-align:center;transition:border-color .15s,box-shadow .15s}
+.answer-zone math-field{min-height:56px;--caret-color:#0f172a;--selection-background-color:rgba(56,189,248,.24);--placeholder-color:#64748b;--placeholder-opacity:1}
+.answer-zone math-field::part(container){height:100%;align-items:center}
+.answer-zone math-field::part(content){justify-content:center}
+.answer-zone input:focus,.answer-zone math-field:focus-within{outline:none;border-color:rgba(56,189,248,.55);box-shadow:0 0 0 3px rgba(56,189,248,.14)}
+.answer-zone input:disabled,.answer-zone math-field[disabled]{opacity:.65}
+.answer-zone math-field::part(menu-toggle),.answer-zone math-field::part(virtual-keyboard-toggle){display:none}
 .primary,.secondary{border-radius:16px;padding:15px 16px;font-size:15px}
 .primary{background:linear-gradient(180deg,#38bdf8,#0ea5e9);color:#082f49;border:1px solid rgba(56,189,248,.4);box-shadow:0 0 18px rgba(56,189,248,.25);transition:box-shadow .2s,transform .12s}
 .primary:not(:disabled):hover{box-shadow:0 0 28px rgba(56,189,248,.5);transform:translateY(-1px)}
@@ -436,7 +474,8 @@ body.bonus-x2 .main-card{
 .kbtn-del  { background: rgba(239,68,68,.22); font-size: 18px; }
 .kbtn-ok   { background: linear-gradient(180deg,#38bdf8,#0ea5e9); color: #082f49; font-size: 18px; }
 .kbtn-comma { background: rgba(255,255,255,.10); font-size: 22px; font-weight: 800; }
-.kbtn-pow2 { background: rgba(251,146,60,.18); color: #fb923c; font-size: 17px; }
+.kbtn-power { background: rgba(251,146,60,.18); color: #fb923c; font-size: 17px; }
+.kbtn-power sup { font-size: .65em; }
 .ios-sound-hint{display:none;margin:8px 0 0;font-size:11px;color:var(--muted);opacity:0.6;line-height:1.4}
 @media(max-width:600px){.ios-sound-hint{display:block}}
 .signature { display:block; text-align:right; padding:6px 16px 10px; font-size:11px; color:rgba(255,255,255,0.35); opacity:0.5; pointer-events:none; user-select:none; }
@@ -581,7 +620,7 @@ body.bonus-x2 .main-card{
 
   /* ── Zone réponse ─────────────────────────────────────────────── */
   .answer-zone { margin-top: 8px; gap: 8px; }
-  .answer-zone input { padding: 12px 14px; font-size: 18px; }
+  .answer-zone input, .answer-zone math-field { padding: 12px 14px; font-size: 18px; min-height: 50px; }
   .primary, .secondary,
   .is-touch .primary,
   .is-touch .secondary { padding: 13px 16px; font-size: 15px; }
@@ -1191,7 +1230,7 @@ html, body, * { cursor: auto !important; }
 <div class="app">
   <div class="hero">
     <h1>🎯 <span class="glow">Leveling Math</span></h1>
-    <div class="subtitle">Objectif : S'entraîner en calcul mental et viser le rang Champion avant le prochain cours.</div>
+    <div class="subtitle" id="levelingObjective">Objectif : S'entraîner en calcul mental et viser le rang Champion avant le prochain cours.</div>
     <div id="auth-user-bar">
       <span>Connecté : <strong id="auth-user-email">—</strong></span>
       <button class="auth-signout-btn" onclick="authSignOut()">Déconnexion</button>
@@ -1212,7 +1251,13 @@ html, body, * { cursor: auto !important; }
         <p class="ios-sound-hint">📵 Téléphone en silencieux ? Active le son pour le compte à rebours audio.</p>
       </div>
 
-      <div class="levels">
+      <div class="mode-selector" role="tablist" aria-label="Mode de jeu">
+        <button class="mode-btn active" id="mode-general-btn" type="button" role="tab" aria-selected="true">Mode général</button>
+        <button class="mode-btn" id="mode-targeted-btn" type="button" role="tab" aria-selected="false">Entraînement ciblé</button>
+      </div>
+
+      <div id="general-levels-panel">
+        <div class="levels">
         <button class="level-btn beginner" id="btn-beginner">
           <span class="lvl-icon">⚔️</span>
           <span class="lvl-name">Débutant</span>
@@ -1228,7 +1273,19 @@ html, body, * { cursor: auto !important; }
           <span class="lvl-name">Expert</span>
           <span class="lvl-sub">Maîtrise absolue</span>
         </button>
+        </div>
+      </div>
 
+      <div class="targeted-menu hidden" id="targeted-menu">
+        <div class="targeted-skill-list" id="targeted-skill-list"></div>
+        <div class="hidden" id="targeted-skill-panel" aria-live="polite">
+          <div class="targeted-menu-head">
+            <button class="targeted-back-btn" id="targeted-back-btn" type="button" aria-label="Retour aux compétences">←</button>
+            <h2 id="targeted-skill-title">Calcul littéral</h2>
+          </div>
+          <div class="targeted-mastered hidden" id="targeted-mastered">Calcul littéral maîtrisé ✓</div>
+          <div class="targeted-difficulty-list" id="targeted-difficulty-list"></div>
+        </div>
       </div>
 
       <div class="xp-mult-wrap"><div id="xpMultBadge" class="xp-mult-badge hidden">🔥 Bonus x2 actif</div></div>
@@ -1237,7 +1294,7 @@ html, body, * { cursor: auto !important; }
         <div class="stat"><div class="label">Score</div><div class="value" id="score">0</div></div>
         <div class="stat"><div class="label">Question</div><div class="value" id="questionCount">0/0</div></div>
         <div class="stat"><div class="label">Temps</div><div class="value" id="timer">15</div></div>
-        <div class="stat"><div class="label">XP Total</div><div class="value" id="xpTotal">0</div></div>
+        <div class="stat"><div class="label" id="xp-total-label">XP Total</div><div class="value" id="xpTotal">0</div></div>
         <div class="stat"><div class="label">Pseudo</div><div class="value" id="pseudoDisplay" style="font-size:18px;">-</div></div>
       </div>
 
@@ -1250,12 +1307,8 @@ html, body, * { cursor: auto !important; }
       </div>
 
       <div class="answer-zone">
-        <!-- inputmode="none" : empêche iOS d'ouvrir le clavier natif.
-             Sur mobile le clavier custom est la seule saisie. Sur desktop le
-             clavier physique fonctionne normalement via l'event keydown. -->
-        <input type="text" id="answerInput" placeholder="Ta réponse" class="hidden"
-          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-          inputmode="none">
+        <math-field id="answerInput" class="hidden" aria-label="Ta réponse"
+          math-virtual-keyboard-policy="manual" smart-fence="on"></math-field>
         <button class="primary hidden" id="validateBtn">Valider</button>
         <button class="secondary hidden" id="restartBtn">↻ Rejouer</button>
       </div>
@@ -1289,7 +1342,7 @@ html, body, * { cursor: auto !important; }
         </div>
         <div class="keypad-grid" style="grid-template-columns: repeat(5, 1fr); margin-top: 8px;">
           <button class="kbtn" data-val="x">x</button>
-          <button class="kbtn kbtn-pow2" id="kbtnPow2">x²</button>
+          <button class="kbtn kbtn-power" id="kbtnPower" aria-label="Insérer x puissance">x<sup>n</sup></button>
           <button class="kbtn" data-val="+">+</button>
           <button class="kbtn" data-val="/">/</button>
           <button class="kbtn" data-val="-">−</button>
@@ -1332,15 +1385,21 @@ html, body, * { cursor: auto !important; }
 </div>
 
 
+<script src="https://cdn.jsdelivr.net/npm/katex@0.18.7/dist/katex.min.js" integrity="sha384-+7Keh381hSkXmXqnjC0JBM/kzsN6TFj+wMKychSLjTvJ8/0ElMde2uKl8i6p6Buj" crossorigin="anonymous"></script>
+<script src="js/app/math-renderer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mathlive@0.110.0/mathlive.min.js" integrity="sha384-5IN6K0kiaz8MufrTGBvPCP3oDeMjmwe+DDTvuyQLNv6gc634FpKbQfllonjHJPmy" crossorigin="anonymous"></script>
+<script src="js/app/math-input.js"></script>
 <script src="js/config/levels.js"></script>
 <script src="js/config/ranks.js"></script>
 <script src="js/config/timers.js"></script>
 <script src="js/config/categories.js"></script>
+<script src="js/config/targeted-skills.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/supabase/client.js"></script>
 <script src="js/supabase/students.js"></script>
 <script src="js/supabase/series.js"></script>
 <script src="js/supabase/questions.js"></script>
+<script src="js/supabase/targeted.js"></script>
 <script src="js/app/main.js"></script>
 <script src="js/supabase/auth.js"></script>
 

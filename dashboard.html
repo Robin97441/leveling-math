@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
   <script src="js/config/levels.js"></script>
   <script src="js/config/ranks.js"></script>
-  <script src="js/config/categories.js"></script>
+  <script src="js/app/targeted-progress-summary.js"></script>
   <script src="js/supabase/client.js"></script>
   <script>const supabaseClient = _qClient;</script>
 
@@ -206,7 +206,6 @@
       border-radius: 16px; padding: 14px 18px; min-width: 110px;
       box-shadow: 0 0 12px rgba(96,165,250,.05), inset 0 1px 0 rgba(255,255,255,.05);
     }
-    .detail-stat-card--wide { min-width: 200px; }
     .detail-stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
     .detail-stat-value { font-size: 22px; font-weight: 900; }
     .detail-stat-value--small { font-size: 14px; font-weight: 700; line-height: 1.3; }
@@ -248,13 +247,6 @@
     .badge--wrong   { background: rgba(239,68,68,.15);  color: #ef4444; }
     .badge--equiv   { background: rgba(251,191,36,.15); color: #fbbf24; }
 
-    .subcat-tag {
-      display: inline-block;
-      background: rgba(96,165,250,.10); color: #93c5fd;
-      font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
-      border: 1px solid rgba(96,165,250,.15);
-    }
-
     /* ── Recalibrage ───────────────────────────────────────────── */
     .recalibrate-section {
       margin-top: 32px; padding: 18px 20px;
@@ -264,12 +256,57 @@
       backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     }
 
+    .objective-editor {
+      display: grid; gap: 9px; margin: 14px 0 20px; padding: 16px 0;
+      border-top: 1px solid rgba(96,165,250,.14);
+      border-bottom: 1px solid rgba(96,165,250,.14);
+    }
+    .objective-editor label { color: #bfdbfe; font-size: 13px; font-weight: 800; }
+    .objective-editor textarea {
+      width: 100%; min-height: 82px; resize: vertical;
+      border: 1px solid rgba(96,165,250,.24); border-radius: 8px;
+      background: #f8fafc; color: #0f172a; padding: 11px 12px;
+      font: 600 15px/1.45 Inter, ui-sans-serif, system-ui, sans-serif;
+      outline: none;
+    }
+    .objective-editor textarea:focus {
+      border-color: rgba(96,165,250,.62);
+      box-shadow: 0 0 0 3px rgba(56,189,248,.14);
+    }
+    .objective-editor-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .objective-save-btn {
+      border: 1px solid rgba(56,189,248,.4); border-radius: 8px;
+      background: linear-gradient(180deg,#38bdf8,#0ea5e9); color: #082f49;
+      padding: 10px 15px; font-size: 13px; font-weight: 850; cursor: pointer;
+    }
+    .objective-save-btn:disabled { opacity: .55; cursor: wait; }
+    .objective-save-status { min-height: 18px; color: #94a3b8; font-size: 12px; }
+    .objective-save-status.success { color: #4ade80; }
+    .objective-save-status.error { color: #fca5a5; }
+
+    .targeted-summary-section { margin: 24px 0; }
+    .targeted-summary-section h3 {
+      margin-bottom: 12px; color: #93c5fd; font-size: 13px;
+      text-transform: uppercase; letter-spacing: .07em;
+    }
+    .targeted-summary-list { border-top: 1px solid rgba(96,165,250,.18); }
+    .targeted-summary-row { padding: 13px 0; border-bottom: 1px solid rgba(96,165,250,.14); }
+    .targeted-summary-row.locked { opacity: .58; }
+    .targeted-summary-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+    .targeted-summary-heading strong { min-width: 110px; font-size: 14px; }
+    .targeted-summary-value { margin-left: auto; color: #dbeafe; font-size: 12px; font-weight: 800; }
+    .targeted-summary-locked { color: #94a3b8; font-size: 11px; font-weight: 700; }
+    .targeted-summary-track { height: 8px; overflow: hidden; border-radius: 4px; background: rgba(255,255,255,.08); }
+    .targeted-summary-track > span { display: block; height: 100%; background: #38bdf8; }
+    .targeted-summary-error { color: #fca5a5; font-size: 13px; }
+
     /* ── Mobile ────────────────────────────────────────────────── */
     @media (max-width: 768px) {
       body { padding: 16px 10px; }
       th, td { padding: 10px 8px; font-size: 13px; }
       .detail-stats-row { gap: 8px; }
       .detail-stat-card { min-width: 90px; padding: 10px 12px; }
+      .objective-save-btn { width: 100%; }
     }
   </style>
 </head>
@@ -536,8 +573,34 @@
   let currentStudentId = null;
   let currentStudentPseudo = null;
   let currentStudentSession = null;
+  let studentDataRequestVersion = 0;
 
   const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function isCurrentStudentRequest(studentId, requestVersion) {
+    return currentStudentId === studentId && studentDataRequestVersion === requestVersion;
+  }
+
+  async function loadAdminTargetedProgress(studentId, skillKey = "calcul_litteral") {
+    const { data, error } = await supabaseClient.rpc("get_targeted_skill_progress_for_admin", {
+      p_student_id: studentId,
+      p_skill_key: skillKey
+    });
+    if (error) throw error;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("Réponse de progression ciblée invalide.");
+    }
+    if (data.student_id !== studentId || data.skill_key !== skillKey || !Array.isArray(data.rows)) {
+      throw new Error("La progression ciblée retournée ne correspond pas à l’élève sélectionné.");
+    }
+    console.log("[dashboard] targeted progress resolved", {
+      admin_auth_user_id: currentAdminUser?.id || null,
+      selected_student_id: studentId,
+      skill_key: skillKey,
+      row_count: data.rows.length
+    });
+    return data.rows;
+  }
 
   async function loadStudentData(studentId, pseudo, session) {
     console.log("[dashboard] ───── selected student ─────");
@@ -549,6 +612,7 @@
     currentStudentId = studentId;
     currentStudentPseudo = pseudo;
     currentStudentSession = session ?? null;
+    const requestVersion = ++studentDataRequestVersion;
     console.log("[dashboard] selected student =", { id: studentId, pseudo, session });
     console.log("[dashboard] currentStudentId    =", currentStudentId);
     console.log("[dashboard] currentStudentPseudo=", currentStudentPseudo);
@@ -557,17 +621,19 @@
     // Feedback UI immédiat (évite l'impression de "rien ne change")
     const historyDiv = document.getElementById("history");
     if (historyDiv) {
-      historyDiv.innerHTML = `<p style="color:#94a3b8;padding:12px">⏳ Chargement de ${pseudo}…</p>`;
+      historyDiv.innerHTML = `<p style="color:#94a3b8;padding:12px">⏳ Chargement de ${escapeHtml(pseudo)}…</p>`;
     }
 
     try {
-      await loadHistory(studentId, pseudo, session);
-      console.log("[dashboard] renderSeriesHistory done (loadHistory returned without throw)");
+      const rendered = await loadHistory(studentId, pseudo, session, requestVersion);
+      if (rendered && isCurrentStudentRequest(studentId, requestVersion)) {
+        console.log("[dashboard] renderSeriesHistory done (loadHistory returned without throw)");
+      }
     } catch (e) {
       console.error("[dashboard] render failed — loadHistory threw:", e);
       console.error("[dashboard] stack:", e && e.stack);
-      if (historyDiv) {
-        historyDiv.innerHTML = `<p style="color:#ef4444;padding:12px">Erreur de rendu : ${String(e && e.message || e)}<br><small style="color:#94a3b8">Voir la console pour le détail.</small></p>`;
+      if (historyDiv && isCurrentStudentRequest(studentId, requestVersion)) {
+        historyDiv.innerHTML = `<p style="color:#ef4444;padding:12px">Erreur de rendu : ${escapeHtml(String(e && e.message || e))}<br><small style="color:#94a3b8">Voir la console pour le détail.</small></p>`;
       }
     }
   }
@@ -764,6 +830,84 @@
     return Number(student?.manual_xp_bonus) || 0;
   }
 
+  function normalizeLevelingObjective(value) {
+    const objective = String(value ?? "").trim();
+    return objective || null;
+  }
+
+  async function saveStudentLevelingObjective(studentId, value) {
+    if (!currentAdminUser) throw new Error("Session administrateur requise.");
+    if (!studentId || !_UUID_RE.test(String(studentId))) throw new Error("Élève invalide.");
+
+    const levelingObjective = normalizeLevelingObjective(value);
+    const { data, error } = await supabaseClient
+      .from("students")
+      .update({
+        leveling_objective: levelingObjective,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", studentId)
+      .select("id, leveling_objective")
+      .single();
+
+    if (error) throw error;
+    if (data?.id !== studentId) throw new Error("La confirmation Supabase ne correspond pas à l’élève sélectionné.");
+    return data;
+  }
+
+  function createLevelingObjectiveEditor(student) {
+    const editor = document.createElement("section");
+    editor.className = "objective-editor";
+
+    const label = document.createElement("label");
+    const inputId = `leveling-objective-${student.id}`;
+    label.htmlFor = inputId;
+    label.textContent = "Objectif Leveling Math";
+
+    const input = document.createElement("textarea");
+    input.id = inputId;
+    input.maxLength = 500;
+    input.placeholder = "Laisser vide pour utiliser l’objectif général.";
+    input.value = normalizeLevelingObjective(student.leveling_objective) || "";
+
+    const actions = document.createElement("div");
+    actions.className = "objective-editor-actions";
+
+    const saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.className = "objective-save-btn";
+    saveButton.textContent = "Enregistrer l’objectif";
+
+    const status = document.createElement("span");
+    status.className = "objective-save-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+
+    saveButton.addEventListener("click", async () => {
+      saveButton.disabled = true;
+      status.className = "objective-save-status";
+      status.textContent = "Enregistrement…";
+      try {
+        const updated = await saveStudentLevelingObjective(student.id, input.value);
+        input.value = normalizeLevelingObjective(updated.leveling_objective) || "";
+        status.className = "objective-save-status success";
+        status.textContent = updated.leveling_objective
+          ? "Objectif enregistré."
+          : "Objectif général réactivé.";
+      } catch (error) {
+        console.error("[dashboard] objectif élève non enregistré:", error);
+        status.className = "objective-save-status error";
+        status.textContent = `Enregistrement impossible : ${error?.message || "erreur Supabase"}`;
+      } finally {
+        saveButton.disabled = false;
+      }
+    });
+
+    actions.append(saveButton, status);
+    editor.append(label, input, actions);
+    return editor;
+  }
+
   // ── Pagination universelle question_results ──────────────────────────────
   // Supabase tronque silencieusement les résultats à 1000 lignes par défaut.
   // Ce helper itère par pages de 1000 jusqu'à épuisement des données.
@@ -897,7 +1041,7 @@
       const displayPseudo = window.formatPseudo ? window.formatPseudo(student.pseudo) : student.pseudo;
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${displayPseudo} S${currentSession}</td>
+        <td>${escapeHtml(displayPseudo)} S${currentSession}</td>
         <td>${xpNet}</td>
         <td>${student.best_score || 0}</td>
         <td>${student.best_avg_time ? student.best_avg_time.toFixed(2) : "-"}</td>
@@ -908,7 +1052,7 @@
     });
   }
 
-  async function loadHistory(studentId, pseudo, session) {
+  async function loadHistory(studentId, pseudo, session, requestVersion) {
     // Fonctions utilitaires
     function translateLevel(level) {
       const translations = {
@@ -941,14 +1085,24 @@
 
     const [
       { data: studentRow, error: studentErr },
-      { data: rawSeriesData, error }
+      { data: rawSeriesData, error },
+      targetedProgressResult
     ] = await Promise.all([
       supabaseClient.from("students").select("*").eq("id", studentId).single(),
-      supabaseClient.from("series_results").select("*").eq("student_id", studentId).eq("session", session).order("created_at", { ascending: false })
+      supabaseClient.from("series_results").select("*").eq("student_id", studentId).eq("session", session).order("created_at", { ascending: false }),
+      loadAdminTargetedProgress(studentId)
+        .then(rows => ({ rows, error: null }))
+        .catch(targetedError => ({ rows: null, error: targetedError }))
     ]);
+
+    if (!isCurrentStudentRequest(studentId, requestVersion)) return false;
+
+    const targetedProgressRows = targetedProgressResult.rows;
+    const targetedProgressError = targetedProgressResult.error;
 
     if (studentErr) console.error("[dashboard] students query error:", studentErr);
     else            console.log("[dashboard] students returned row =", studentRow);
+    if (targetedProgressError) console.error("[dashboard] targeted_skill_progress query error:", targetedProgressError);
 
     if (error) {
       console.error("[dashboard] series_results query error:", error);
@@ -970,6 +1124,7 @@
       if (allErr) console.error("[dashboard] fallback all-sessions error:", allErr);
       const availSess = Array.from(new Set((allSess || []).map(r => r.session).filter(s => s != null))).sort((a,b)=>a-b);
       console.log("[dashboard] sessions réellement présentes pour cet élève =", availSess);
+      if (!isCurrentStudentRequest(studentId, requestVersion)) return false;
       if (availSess.length > 0) {
         const fallback = availSess.includes(session) ? session : availSess[availSess.length - 1];
         console.warn(`[dashboard] fallback → rechargement session ${fallback} pour student_id ${studentId}`);
@@ -978,6 +1133,7 @@
           .eq("student_id", studentId).eq("session", fallback)
           .order("created_at", { ascending: false });
         if (fbErr) { console.error("[dashboard] fallback query error:", fbErr); throw new Error("fallback: " + fbErr.message); }
+        if (!isCurrentStudentRequest(studentId, requestVersion)) return false;
         data = fbData || [];
         effectiveSession = fallback;
         session = fallback; // aligner la variable locale pour tout le rendu
@@ -992,10 +1148,11 @@
     const questionData = seriesIds.length > 0
       ? await fetchAllQR(() =>
           supabaseClient.from("question_results")
-            .select("xp_delta, series_id, category, subcategory, is_correct, response_time, user_answer")
+            .select("xp_delta, series_id, category, is_correct, response_time, user_answer")
             .in("series_id", seriesIds)
         )
       : [];
+    if (!isCurrentStudentRequest(studentId, requestVersion)) return false;
     console.log("[dashboard] question_results returned", questionData.length, "rows");
     console.log("[dashboard] question_results first 3 =", questionData.slice(0, 3));
 
@@ -1066,6 +1223,8 @@
       ? `Historique de ${pseudo} — Session ${session || 1} (+${manualBonus} XP bonus manuel)`
       : `Historique de ${pseudo} — Session ${session || 1}`;
     historyDiv.appendChild(title);
+
+    if (studentRow) historyDiv.appendChild(createLevelingObjectiveEditor(studentRow));
 
     // Sélecteur de sessions
     if (availableSessions.length > 1) {
@@ -1273,7 +1432,7 @@
         localStorage.removeItem("leveling_math_v38_save");
         localStorage.removeItem("currentSession");
         await loadStudents();
-        document.getElementById("history").innerHTML = `<p style="color: #94a3b8; margin-top: 8px;">Élève "${pseudo}" supprimé.</p>`;
+        document.getElementById("history").innerHTML = `<p style="color: #94a3b8; margin-top: 8px;">Élève "${escapeHtml(pseudo)}" supprimé.</p>`;
       } catch(e) {
         console.error("Erreur suppression élève:", e);
         alert("Erreur lors de la suppression.");
@@ -1305,7 +1464,7 @@
       const levelCard = document.createElement("div");
       levelCard.style.cssText = "background: rgba(10,20,50,.45); backdrop-filter: blur(10px); border: 1px solid rgba(96,165,250,.18); padding: 16px 18px; border-radius: 16px; min-width: 200px; box-shadow: 0 0 12px rgba(96,165,250,.05), inset 0 1px 0 rgba(255,255,255,.05);";
       levelCard.innerHTML = `
-        <h3>${translateLevel(level)}</h3>
+        <h3>${escapeHtml(translateLevel(level))}</h3>
         <p>Parties : ${levelStats.count}</p>
         <p style="color: ${getAverageScoreColor(avgScoreLevel)}; font-weight: bold;">Score moyen : ${avgScoreLevel}</p>
         <p style="color: ${getAverageTimeColor(avgTimeLevel)}; font-weight: bold;">Temps moyen : ${avgTimeLevel}s</p>
@@ -1314,11 +1473,23 @@
     });
     historyDiv.appendChild(levelsDiv);
 
+    const targetedSection = document.createElement("section");
+    targetedSection.className = "targeted-summary-section";
+    const targetedTitle = document.createElement("h3");
+    targetedTitle.textContent = "Entraînement ciblé · Calcul littéral";
+    const targetedProgressMount = document.createElement("div");
+    targetedProgressMount.setAttribute("aria-live", "polite");
+    targetedSection.append(targetedTitle, targetedProgressMount);
+    historyDiv.appendChild(targetedSection);
+    LevelingMathTargetedProgressSummary.render(targetedProgressMount, targetedProgressRows, {
+      errorMessage: targetedProgressError ? "Progression ciblée indisponible pour le moment." : ""
+    });
+
     if (data.length === 0) {
       const empty = document.createElement("p");
       empty.textContent = "Aucune série trouvée.";
       historyDiv.appendChild(empty);
-      return;
+      return true;
     }
 
     // Tableau des séries
@@ -1363,7 +1534,7 @@
         : "";
 
       tr.innerHTML = `
-        <td>${translateLevel(series.level)}</td>
+        <td>${escapeHtml(translateLevel(series.level))}</td>
         <td style="color:#22c55e;font-weight:800">${nCorrect ?? "—"}</td>
         <td style="color:${nWrong > 0 ? "#ef4444" : "#64748b"};font-weight:800">${nWrong ?? "—"}</td>
         <td style="color:${getAverageTimeColor(series.avg_time)};font-weight:700">${series.avg_time ? series.avg_time.toFixed(1) + " s" : "—"}</td>
@@ -1409,19 +1580,6 @@
       if (q.response_time != null) {
         catStats[canonKey].totalTime += q.response_time;
         catStats[canonKey].timeCount++;
-      }
-    });
-
-    // Agrégation par sous-catégorie — même source, pas de requête supplémentaire
-    const subcatStats = {};
-    questionData.forEach(q => {
-      if (q.category === "refresh_penalty" || !q.subcategory) return;
-      if (!subcatStats[q.subcategory]) subcatStats[q.subcategory] = { total: 0, correct: 0, totalTime: 0, timeCount: 0 };
-      subcatStats[q.subcategory].total++;
-      if (q.is_correct) subcatStats[q.subcategory].correct++;
-      if (q.response_time != null) {
-        subcatStats[q.subcategory].totalTime += q.response_time;
-        subcatStats[q.subcategory].timeCount++;
       }
     });
 
@@ -1499,138 +1657,14 @@
       historyDiv.appendChild(catSection);
     }
 
-    // ── Lacunes par sous-catégorie ────────────────────────────────────────────
-    // Seuil : ≥ 3 tentatives pour être significatif (évite le bruit sur 1-2 questions)
-    const weakSubcats = Object.entries(subcatStats)
-      .filter(([, s]) => s.total >= 3)
-      .map(([key, s]) => ({
-        key,
-        label: SUBCAT_LABELS[key] || key,
-        rate: Math.round((s.correct / s.total) * 100),
-        correct: s.correct,
-        total: s.total,
-        avgTime: s.timeCount > 0 ? (s.totalTime / s.timeCount).toFixed(1) : null
-      }))
-      .sort((a, b) => a.rate - b.rate); // plus faible en premier
-
-    if (weakSubcats.length > 0) {
-      const scSection = document.createElement("div");
-      scSection.style.cssText = "margin-top: 32px;";
-
-      const scTitle = document.createElement("h3");
-      scTitle.textContent = "Détail par sous-type de calcul";
-      scTitle.style.cssText = "margin: 0 0 14px; font-size: 13px; color: #93c5fd; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; text-shadow: 0 0 12px rgba(96,165,250,.3);";
-      scSection.appendChild(scTitle);
-
-      const scTable = document.createElement("table");
-      scTable.style.cssText = "width:100%;border-collapse:collapse;background:rgba(10,20,50,.45);backdrop-filter:blur(14px);border:1px solid rgba(96,165,250,.18);border-radius:20px;overflow:hidden;font-size:13px;box-shadow:0 0 28px rgba(96,165,250,.08),0 2px 40px rgba(0,0,0,.28);";
-      scTable.innerHTML = `
-        <thead>
-          <tr>
-            <th style="text-align:left;padding:10px 14px;background:rgba(5,12,40,.60);color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.05em">Sous-type</th>
-            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.05em">Questions</th>
-            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#22c55e;font-size:12px;text-transform:uppercase">✓</th>
-            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#ef4444;font-size:12px;text-transform:uppercase">✗</th>
-            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.05em">Temps moy.</th>
-            <th style="padding:10px 14px;background:rgba(5,12,40,.60);color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.05em">Réussite</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      `;
-      const scTbody = scTable.querySelector("tbody");
-      weakSubcats.forEach(sc => {
-        const rateColor = sc.rate >= 75 ? "#22c55e" : sc.rate >= 50 ? "#f59e0b" : "#ef4444";
-        const wrong = sc.total - sc.correct;
-        const tr = document.createElement("tr");
-        tr.style.cssText = "border-bottom:1px solid rgba(96,165,250,.06);";
-        tr.innerHTML = `
-          <td style="padding:10px 14px;font-weight:700">${sc.label}</td>
-          <td style="padding:10px 14px;text-align:center;color:#94a3b8">${sc.total}</td>
-          <td style="padding:10px 14px;text-align:center;color:#22c55e;font-weight:700">${sc.correct}</td>
-          <td style="padding:10px 14px;text-align:center;color:${wrong > 0 ? "#ef4444" : "#64748b"};font-weight:700">${wrong}</td>
-          <td style="padding:10px 14px;text-align:center;color:#94a3b8">${sc.avgTime != null ? sc.avgTime + " s" : "—"}</td>
-          <td style="padding:10px 14px;">
-            <div style="display:flex;align-items:center;gap:8px">
-              <div style="flex:1;height:6px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden">
-                <div style="height:100%;width:${sc.rate}%;background:${rateColor};border-radius:999px"></div>
-              </div>
-              <span style="color:${rateColor};font-weight:800;font-size:13px;white-space:nowrap">${sc.rate} %</span>
-            </div>
-          </td>
-        `;
-        scTbody.appendChild(tr);
-      });
-      scSection.appendChild(scTable);
-      historyDiv.appendChild(scSection);
-    }
-
-    // ── Plan de révision ──────────────────────────────────────────────────────
-    // Synthèse actionnable : catégories faibles (< 60%) + sous-types faibles (< 50%, ≥ 3 tentatives)
-    const weakCats = catEntries.filter(([, s]) => s.total >= 5 && (s.correct / s.total) < 0.60);
-    const criticalSubcats = weakSubcats.filter(sc => sc.rate < 50);
-
-    if (weakCats.length > 0 || criticalSubcats.length > 0) {
-      const planSection = document.createElement("div");
-      planSection.style.cssText = "margin-top: 32px;";
-
-      const planTitle = document.createElement("h3");
-      planTitle.textContent = "Plan de révision";
-      planTitle.style.cssText = "margin: 0 0 14px; font-size: 13px; color: #93c5fd; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; text-shadow: 0 0 12px rgba(96,165,250,.3);";
-      planSection.appendChild(planTitle);
-
-      const planCard = document.createElement("div");
-      planCard.style.cssText = "background:rgba(10,20,50,.45);backdrop-filter:blur(14px);border:1px solid rgba(96,165,250,.18);border-radius:18px;padding:18px 20px;display:flex;flex-direction:column;gap:14px;box-shadow:0 0 28px rgba(96,165,250,.08),inset 0 1px 0 rgba(255,255,255,.07);";
-
-      // Catégories prioritaires
-      if (weakCats.length > 0) {
-        const block = document.createElement("div");
-        block.innerHTML = `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:8px;font-weight:700">Catégories à retravailler</div>`;
-        weakCats.slice(0, 3).forEach(([, s]) => {
-          const rate = Math.round((s.correct / s.total) * 100);
-          const rateColor = rate >= 50 ? "#f59e0b" : "#ef4444";
-          const pill = document.createElement("div");
-          pill.style.cssText = "display:inline-flex;align-items:center;gap:8px;background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.2);border-radius:999px;padding:5px 12px;margin:0 6px 6px 0;";
-          pill.innerHTML = `
-            <span style="font-size:16px">${s.meta.icon}</span>
-            <span style="font-weight:800;font-size:14px">${s.meta.label}</span>
-            <span style="color:${rateColor};font-weight:700;font-size:13px">${rate} %</span>
-          `;
-          block.appendChild(pill);
-        });
-        planCard.appendChild(block);
-      }
-
-      // Sous-types critiques
-      if (criticalSubcats.length > 0) {
-        const block = document.createElement("div");
-        block.innerHTML = `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:8px;font-weight:700">Sous-types critiques (< 50 %)</div>`;
-        criticalSubcats.slice(0, 5).forEach(sc => {
-          const pill = document.createElement("div");
-          pill.style.cssText = "display:inline-flex;align-items:center;gap:8px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.28);border-radius:999px;padding:5px 12px;margin:0 6px 6px 0;";
-          pill.innerHTML = `
-            <span style="font-weight:700;font-size:13px">${sc.label}</span>
-            <span style="background:#ef4444;color:white;font-size:11px;font-weight:800;padding:1px 6px;border-radius:999px">${sc.rate} %</span>
-            <span style="color:#64748b;font-size:11px">${sc.correct}/${sc.total}</span>
-          `;
-          block.appendChild(pill);
-        });
-        planCard.appendChild(block);
-      }
-
-      // Mention "Pas de lacune détectée"
-      if (weakCats.length === 0 && criticalSubcats.length === 0) {
-        planCard.innerHTML = `<p style="color:#22c55e;font-weight:700;margin:0">✅ Aucune lacune critique détectée sur cette session.</p>`;
-      }
-
-      planSection.appendChild(planCard);
-      historyDiv.appendChild(planSection);
-    }
+    return true;
   }
 
   // ── Vue détail d'une série ────────────────────────────────────────────────
-  // SUBCAT_LABELS → js/config/categories.js
 
   async function loadSeriesDetail(seriesId, series, pseudo, studentId, session) {
+    const requestVersion = studentDataRequestVersion;
+    if (!isCurrentStudentRequest(studentId, requestVersion)) return;
     const historyDiv = document.getElementById("history");
     historyDiv.innerHTML = "<p style='color:#94a3b8;padding:20px'>⏳ Chargement...</p>";
 
@@ -1639,6 +1673,8 @@
       .select("*")
       .eq("series_id", seriesId)
       .order("created_at", { ascending: true });
+
+    if (!isCurrentStudentRequest(studentId, requestVersion)) return;
 
     if (error) {
       console.error(error);
@@ -1732,21 +1768,6 @@
     const avgTime = times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : null;
     const dateStr = series.created_at ? new Date(series.created_at).toLocaleString("fr-FR") : "—";
 
-    // Sous-catégorie la plus en difficulté (hors lignes pénalité)
-    const subcatStats = {};
-    questionRows.forEach(q => {
-      const sc = q.subcategory || "inconnu";
-      if (!subcatStats[sc]) subcatStats[sc] = { total: 0, wrong: 0 };
-      subcatStats[sc].total++;
-      if (!q.is_correct) subcatStats[sc].wrong++;
-    });
-    const hardestEntry = Object.entries(subcatStats)
-      .filter(([, s]) => s.total >= 2 && s.wrong > 0)
-      .sort((a, b) => (b[1].wrong / b[1].total) - (a[1].wrong / a[1].total))[0];
-    const hardestLabel = hardestEntry
-      ? `${SUBCAT_LABELS[hardestEntry[0]] || hardestEntry[0]} (${hardestEntry[1].wrong}/${hardestEntry[1].total})`
-      : "—";
-
     const scoreColor = correct / total >= 0.9 ? "#22c55e" : correct / total >= 0.7 ? "#f59e0b" : "#ef4444";
 
     // Header
@@ -1754,8 +1775,8 @@
     header.className = "detail-header";
     header.innerHTML = `
       <div class="detail-header-title">
-        <span class="detail-level-badge">${translateLevel(series.level)}</span>
-        <span class="detail-student">${pseudo}</span>
+        <span class="detail-level-badge">${escapeHtml(translateLevel(series.level))}</span>
+        <span class="detail-student">${escapeHtml(pseudo)}</span>
         <span class="detail-date">${dateStr}</span>
       </div>
       <div class="detail-stats-row">
@@ -1771,10 +1792,6 @@
         <div class="detail-stat-card">
           <div class="detail-stat-label">Temps moyen</div>
           <div class="detail-stat-value" style="color:${getAverageTimeColor(avgTime)}">${avgTime ? avgTime + ' s' : '—'}</div>
-        </div>
-        <div class="detail-stat-card detail-stat-card--wide">
-          <div class="detail-stat-label">Point faible</div>
-          <div class="detail-stat-value detail-stat-value--small">${hardestLabel}</div>
         </div>
       </div>
     `;
@@ -1798,7 +1815,7 @@
     thead.innerHTML = `<tr>
       <th>#</th><th>Question</th><th>Réponse élève</th>
       <th>Bonne réponse</th><th>Statut</th>
-      <th>Type</th><th>Sous-catégorie</th><th>Temps</th><th>XP</th>
+      <th>Type</th><th>Temps</th><th>XP</th>
     </tr>`;
     table.appendChild(thead);
 
@@ -1812,7 +1829,7 @@
         tr.style.cssText = "background:rgba(239,68,68,.10);";
         tr.innerHTML = `
           <td class="detail-idx" style="color:#f87171">🔄</td>
-          <td colspan="7" style="color:#f87171;font-weight:700;font-style:italic">
+          <td colspan="6" style="color:#f87171;font-weight:700;font-style:italic">
             Pénalité refresh — série reprise après rechargement de la page
           </td>
           <td style="color:#f87171;font-weight:800;white-space:nowrap">−10 XP</td>
@@ -1834,7 +1851,7 @@
 
       const userAns = q.user_answer == null ? "—"
         : q.user_answer === "" ? "<span style='color:#64748b;font-style:italic'>timeout</span>"
-        : q.user_answer;
+        : escapeHtml(q.user_answer);
 
       // Type de calcul (category) — libellé lisible
       const CAT_LABELS = {
@@ -1854,12 +1871,11 @@
 
       tr.innerHTML = `
         <td class="detail-idx">${questionCounter}</td>
-        <td class="detail-question">${q.question_text || "—"}</td>
+        <td class="detail-question">${escapeHtml(q.question_text || "—")}</td>
         <td class="detail-user-ans ans--${status}">${userAns}</td>
-        <td class="detail-expected">${q.expected_answer || "—"}</td>
+        <td class="detail-expected">${escapeHtml(q.expected_answer || "—")}</td>
         <td>${badge}</td>
-        <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${catLabel}</td>
-        <td><span class="subcat-tag">${SUBCAT_LABELS[q.subcategory] || q.subcategory || "—"}</span></td>
+        <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${escapeHtml(catLabel)}</td>
         <td class="detail-time" style="color:${getResponseTimeColor(q.response_time, q.subcategory)}">${q.response_time != null ? q.response_time.toFixed(1) + " s" : "—"}</td>
         <td style="color:${qXpColor};font-weight:800;white-space:nowrap">${qXpDisplay}</td>
       `;

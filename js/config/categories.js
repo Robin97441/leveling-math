@@ -9,6 +9,9 @@ const SUBCAT_TO_CAT = {
   // Expert
   puissance_cube:"puissances", fractions_denominateurs_differents:"fractions",
   pourcentage_entier:"pourcentages", reduction_termes:"calcul_litteral", distributivite_simple:"calcul_litteral",
+  reduction_termes_x:"calcul_litteral", reduction_constantes_x:"calcul_litteral",
+  multiplication_monomes:"calcul_litteral", multiplication_x_carre:"calcul_litteral",
+  parentheses_signe_moins:"calcul_litteral",
   addition_3chiffres:"addition", soustraction_3chiffres:"soustraction",
   // Historique avant refonte
   puissance_carre:"puissances",
@@ -46,6 +49,11 @@ const SUBCAT_LABELS = {
   puissance_cube:                     "Puissances de 3 (2³–10³)",
   reduction_termes:                   "Réduction de termes",
   distributivite_simple:              "Distributivité simple",
+  reduction_termes_x:                 "Réduction de termes en x",
+  reduction_constantes_x:             "Constantes et termes en x",
+  multiplication_monomes:             "Multiplication de monômes",
+  multiplication_x_carre:             "Gestion de x²",
+  parentheses_signe_moins:            "Signe − devant des parenthèses",
   fractions_denominateurs_differents: "Fractions (dénominateurs différents)",
   pourcentage_entier:                 "Pourcentages",
   // ── Historique (données avant refonte) ────────────────────────────────
