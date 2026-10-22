@@ -173,37 +173,16 @@ window.saveStudent = async function saveStudent(pseudo) {
 
 window.startNewSession = async function startNewSession(studentId) {
   try {
-    const { data: student, error: selectError } = await _qClient
-      .from("students")
-      .select("*")
-      .eq("id", studentId)
-      .single();
-
-    if (selectError) {
-      console.error("❌ ERROR SELECT STUDENT:", selectError);
-      return null;
-    }
-
-    const { data, error } = await _qClient
-      .from("students")
-      .update({
-        xp_total: 0,
-        best_score: 0,
-        best_avg_time: null,
-        games_played: 0,
-        session: (student.session || 1) + 1,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", studentId)
-      .select()
-      .single();
+    const { data, error } = await _qClient.rpc("start_student_session", {
+      p_student_id: studentId
+    });
 
     if (error) {
       console.error("❌ ERROR START NEW SESSION:", error);
       return null;
     }
 
-    console.log("✅ Nouvelle session démarrée pour", student.pseudo, "→ session", data.session);
+    console.log("✅ Nouvelle session démarrée côté serveur → session", data.session);
     return data;
   } catch (e) {
     console.error("❌ EXCEPTION START NEW SESSION:", e);

@@ -20,6 +20,7 @@ let activeLocalSeriesId = null;     // identité locale avant attribution de l'U
 let activeSessionForQuiz = null;
 let _refreshPenaltyApplied = false; // true dès que la pénalité -10 XP a été enregistrée en base
 let _refreshPenaltyPending = false; // true entre la reprise (startQuiz) et la première réponse
+let _refreshPenaltyAnswerId = null; // stable across reload/retry for RPC idempotency
 let isSubmitting = false;           // verrou très court contre le double clic.
 let pendingSupabaseSaves = 0;       // sauvegardes submit_answer en arrière-plan.
 let backgroundSaveChain = Promise.resolve(); // garantit l'ordre des RPC submit_answer.
@@ -355,6 +356,17 @@ function createLocalSeriesId(){
   }
   return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
+function createAnswerSubmissionId(){
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map(value => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 function loadGame(){
   const authUserId = getActiveStorageUserId();
   const storageKey = getSaveStorageKey();
@@ -398,7 +410,7 @@ function loadGame(){
 // Sauvegarde l'état complet de la série dans localStorage.
 // Appelé dès le démarrage de la série (pas après la première réponse).
 // Cela empêche le reroll : un refresh retrouve exactement les mêmes questions.
-function saveSeriesState(){
+function saveSeriesState(questionIndexOverride = currentQuestionIndex){
   if (_seriesStateWritesSuspended) return;
   try {
     const authUserId = getActiveStorageUserId();
@@ -410,13 +422,14 @@ function saveSeriesState(){
       localSeriesId: activeLocalSeriesId,
       levelKey:     currentLevelKey,
       questions:    questions,          // tableau complet généré une seule fois
-      questionIndex: currentQuestionIndex,
+      questionIndex: questionIndexOverride,
       score:        score,
       seriesXpDelta: _seriesXpDelta,
       seriesTimes:  _seriesTimes,
       supabaseSeriesId: activeSeriesId,   // null si pas encore créé en base
       supabaseSession:  activeSessionForQuiz,
       refreshPenaltyApplied: _refreshPenaltyApplied,
+      refreshPenaltyAnswerId: _refreshPenaltyAnswerId,
       savedAt:      Date.now()
     }));
   } catch(e) { console.warn("saveSeriesState failed", e); }
@@ -1359,15 +1372,20 @@ function breakXpBonus(){
   }
 }
 
-function applyXp(delta){
+function applyConfirmedXpSnapshot(snapshot){
   try {
     const previousIndex = rankIndexFromXp(xp);
-    const nextXp = Math.max(0, xp + delta);
+    const nextXp = Number(snapshot?.student_display_xp);
+    if (!Number.isFinite(nextXp)) throw new Error("Invalid server XP snapshot");
     const nextIndex = rankIndexFromXp(nextXp);
     xp = nextXp;
+    bestScore = Number(snapshot.best_score) || 0;
+    statBestAvgTime = snapshot.best_avg_time || null;
+    statGames = Number(snapshot.games_played) || 0;
+    localSession = Number(snapshot.session) || localSession;
     updateRankUI();
     saveGame();
-    updateLevelButtons();   // verrouillage en live : dès que xp change, boutons mis à jour
+    updateLevelButtons();
     if(nextIndex > previousIndex) {
       playRankUpSound();
       showRankOverlay(RANKS[nextIndex], false);
@@ -1376,152 +1394,8 @@ function applyXp(delta){
       showRankOverlay(RANKS[nextIndex], true);
     }
   } catch(e) {
-    console.error("applyXp error", e);
+    console.error("applyConfirmedXpSnapshot error", e);
   }
-}
-
-function getDisplayedQuestionXpDelta(question, level) {
-  const rawDelta = Number(question?.xp_delta) || 0;
-  if (!question || question.category === "refresh_penalty" || question.is_correct) return rawDelta;
-
-  const rules = (typeof LEVELS === "object" && LEVELS && LEVELS[level]) ? LEVELS[level] : null;
-  if (!rules) return rawDelta;
-
-  const isTimeout = question.user_answer === "";
-  const penalty = Number(isTimeout ? rules.timeout : rules.wrong) || 0;
-  return penalty > 0 ? -penalty : 0;
-}
-
-function computeFlooredXP(seriesOrdered, xpBySeriesId) {
-  let total = 0;
-  for (const series of seriesOrdered || []) {
-    const seriesXP = xpBySeriesId[series.id] ?? 0;
-    total = Math.max(0, total + seriesXP);
-  }
-  return total;
-}
-
-async function fetchAllQuestionResults(buildQuery) {
-  const BATCH = 1000;
-  let from = 0;
-  let all = [];
-  while (true) {
-    const { data, error } = await buildQuery().range(from, from + BATCH - 1);
-    if (error) throw error;
-    all = all.concat(data || []);
-    if ((data || []).length < BATCH) break;
-    from += BATCH;
-  }
-  return all;
-}
-
-async function recalculateStudentXpFromResults(student, { updateUi = false, reason = "sync" } = {}) {
-  if (!student?.id || typeof _qClient === "undefined") return null;
-
-  const session = student.session || localSession || activeSessionForQuiz || 1;
-  const { data: seriesRows, error: seriesError } = await _qClient
-    .from("series_results")
-    .select("id, xp_gained, student_id, session, level, created_at")
-    .eq("student_id", student.id)
-    .eq("session", session)
-    .order("created_at", { ascending: true });
-
-  if (seriesError) throw seriesError;
-
-  const seriesIds = (seriesRows || []).map(s => s.id).filter(Boolean);
-  const questionRows = seriesIds.length > 0
-    ? await fetchAllQuestionResults(() =>
-        _qClient.from("question_results")
-          .select("series_id, xp_delta, category, is_correct, user_answer")
-          .in("series_id", seriesIds)
-      )
-    : [];
-
-  const levelBySeriesId = {};
-  (seriesRows || []).forEach(series => {
-    if (series.id != null) levelBySeriesId[series.id] = series.level;
-  });
-
-  const xpBySeriesDisplayed = {};
-  questionRows.forEach(question => {
-    if (question.series_id == null) return;
-    xpBySeriesDisplayed[question.series_id] = (xpBySeriesDisplayed[question.series_id] || 0)
-      + getDisplayedQuestionXpDelta(question, levelBySeriesId[question.series_id]);
-  });
-
-  for (const series of (seriesRows || [])) {
-    const displayedSeriesXp = xpBySeriesDisplayed[series.id] ?? 0;
-    if (displayedSeriesXp !== series.xp_gained) {
-      const { error } = await _qClient
-        .from("series_results")
-        .update({ xp_gained: displayedSeriesXp })
-        .eq("id", series.id);
-      if (error) console.warn("[xp-recalc] series_results.xp_gained non mis à jour", { series_id: series.id, error });
-    }
-  }
-
-  const recalibratedBaseXp = computeFlooredXP(seriesRows || [], xpBySeriesDisplayed);
-  const manualXpBonus = Number(student.manual_xp_bonus) || 0;
-  let updatedStudent = {
-    xp_total: Number(student.xp_total) || 0,
-    manual_xp_bonus: manualXpBonus,
-    best_score: student.best_score,
-    best_avg_time: student.best_avg_time,
-    games_played: student.games_played,
-    session
-  };
-
-  if (recalibratedBaseXp !== (Number(student.xp_total) || 0)) {
-    const { data, error: updateError } = await _qClient
-      .from("students")
-      .update({ xp_total: recalibratedBaseXp, updated_at: new Date().toISOString() })
-      .eq("id", student.id)
-      .select("xp_total, manual_xp_bonus, best_score, best_avg_time, games_played, session")
-      .single();
-
-    if (updateError) throw updateError;
-    updatedStudent = data;
-  }
-
-  const displayXp = recalibratedBaseXp + manualXpBonus;
-  console.log("[xp-recalc] XP recalculé depuis question_results", {
-    reason,
-    student_id: student.id,
-    session,
-    xp_before: student.xp_total,
-    xp_total: recalibratedBaseXp,
-    manual_xp_bonus: manualXpBonus,
-    xp_displayed: displayXp,
-    series_count: (seriesRows || []).length,
-    question_count: questionRows.length
-  });
-
-  if (updateUi) {
-    xp = displayXp;
-    bestScore = Number(updatedStudent.best_score) || bestScore || 0;
-    statBestAvgTime = updatedStudent.best_avg_time || statBestAvgTime || null;
-    statGames = Number(updatedStudent.games_played) || statGames || 0;
-    localSession = updatedStudent.session || session;
-    localStorage.setItem(getSessionStorageKey(), String(localSession));
-    updateRankUI();
-    updateLevelButtons();
-    saveGame();
-  }
-
-  return {
-    ...student,
-    ...updatedStudent,
-    xp_total: recalibratedBaseXp,
-    manual_xp_bonus: manualXpBonus,
-    session
-  };
-}
-
-async function recalibrateCurrentStudentXp(reason = "manual") {
-  if (!pseudo || typeof window.saveStudent !== "function") return null;
-  const student = await window.saveStudent(pseudo);
-  if (!student) return null;
-  return recalculateStudentXpFromResults(student, { updateUi: true, reason });
 }
 
 function syncXpFromServerQuietly(reason = "background") {
@@ -1546,6 +1420,13 @@ function syncXpFromServerQuietly(reason = "background") {
 
 function submitAnswerInBackground(args, rollbackSnapshot) {
   const ownerAuthUserId = getActiveStorageUserId();
+  const clientAnswerId = args[8];
+  const localSeriesIdAtSubmit = activeLocalSeriesId;
+  if (_refreshPenaltyPending && !_refreshPenaltyAnswerId) {
+    _refreshPenaltyAnswerId = createAnswerSubmissionId();
+    saveSeriesState();
+  }
+  const queuePersistence = _enqueueOfflineSave(args, ownerAuthUserId);
   pendingSupabaseSaves++;
   console.log("[progress] sauvegarde réponse en arrière-plan", {
     pendingSupabaseSaves,
@@ -1558,6 +1439,9 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
 
   const runSave = async () => {
     try {
+      await queuePersistence.catch(error => {
+        console.error("[offline-queue] IndexedDB indisponible; tentative RPC maintenue", error);
+      });
       const currentAuthUserId = getActiveStorageUserId();
       if (ownerAuthUserId && currentAuthUserId && ownerAuthUserId !== currentAuthUserId) {
         console.warn("[offline-queue] sauvegarde abandonnée — le compte actif a changé", {
@@ -1580,11 +1464,20 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
           online: navigator.onLine,
           queueLength: _offlineQueue.length + 1
         });
-        _enqueueOfflineSave(args, ownerAuthUserId);
         syncXpFromServerQuietly("submit_answer_failed");
         return false;
       }
 
+      await _removeOfflineSave(clientAnswerId);
+      const assignedSeriesId = saved.series_id || activeSeriesId;
+      for (const queued of _offlineQueue) {
+        if (queued.localSeriesId !== localSeriesIdAtSubmit) continue;
+        queued.seriesId = assignedSeriesId;
+        queued.refreshPenaltyPending = _refreshPenaltyPending;
+        queued.refreshPenaltyApplied = _refreshPenaltyApplied;
+        queued.refreshPenaltyAnswerId = _refreshPenaltyAnswerId;
+        await window.LevelingMathOfflineQueue.put(queued);
+      }
       console.log("[progress] réponse sauvegardée en arrière-plan");
       return true;
     } catch(e) {
@@ -1592,7 +1485,6 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
         online: navigator.onLine,
         queueLength: _offlineQueue.length + 1
       });
-      _enqueueOfflineSave(args, ownerAuthUserId);
       syncXpFromServerQuietly("submit_answer_exception");
       return false;
     } finally {
@@ -1623,22 +1515,67 @@ function showSyncBanner(state) {
 }
 
 // ── Queue de sauvegardes offline + retry ────────────────────────────────────
-function _enqueueOfflineSave(args, ownerAuthUserId = getActiveStorageUserId()) {
+async function _enqueueOfflineSave(args, ownerAuthUserId = getActiveStorageUserId()) {
   if (!activeLocalSeriesId) activeLocalSeriesId = createLocalSeriesId();
-  _offlineQueue.push({
+  const clientAnswerId = args[8];
+  if (!clientAnswerId) throw new Error("Offline answer requires clientAnswerId");
+  const item = {
+    clientAnswerId,
     args,
     seriesId: activeSeriesId,
     localSeriesId: activeLocalSeriesId,
+    levelKey: currentLevelKey,
     sessionId: activeSessionForQuiz,
     refreshPenaltyPending: _refreshPenaltyPending,
     refreshPenaltyApplied: _refreshPenaltyApplied,
-    ownerAuthUserId
-  });
+    refreshPenaltyAnswerId: _refreshPenaltyAnswerId,
+    ownerAuthUserId,
+    createdAt: Date.now()
+  };
+  const existingIndex = _offlineQueue.findIndex(row => row.clientAnswerId === clientAnswerId);
+  if (existingIndex >= 0) _offlineQueue[existingIndex] = item;
+  else _offlineQueue.push(item);
+  await window.LevelingMathOfflineQueue.put(item);
   showSyncBanner("pending");
   if (!_retryTimerId) {
     _retryTimerId = setInterval(_flushOfflineQueue, 8000);
   }
   console.log("[offline-queue] enqueued", { queueLength: _offlineQueue.length, online: navigator.onLine });
+}
+
+async function _removeOfflineSave(clientAnswerId){
+  _offlineQueue = _offlineQueue.filter(item => item.clientAnswerId !== clientAnswerId);
+  if (clientAnswerId) await window.LevelingMathOfflineQueue.remove(clientAnswerId);
+}
+
+function _updatePersistedSeriesIdentity(item, assignedSeriesId){
+  if (!item?.localSeriesId || !assignedSeriesId) return;
+  try {
+    const storageKey = getSeriesStateStorageKey(item.ownerAuthUserId);
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    if (state.localSeriesId !== item.localSeriesId) return;
+    state.supabaseSeriesId = assignedSeriesId;
+    state.refreshPenaltyApplied = _refreshPenaltyApplied;
+    state.refreshPenaltyAnswerId = _refreshPenaltyAnswerId;
+    state.savedAt = Date.now();
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch (error) {
+    console.error("[offline-queue] mise à jour de l'identité de série impossible", error);
+  }
+}
+
+async function _hydrateOfflineQueue(ownerAuthUserId = getActiveStorageUserId()){
+  if (!ownerAuthUserId || !window.LevelingMathOfflineQueue) return;
+  const persisted = await window.LevelingMathOfflineQueue.list(ownerAuthUserId);
+  const byId = new Map(_offlineQueue.map(item => [item.clientAnswerId, item]));
+  persisted.forEach(item => byId.set(item.clientAnswerId, item));
+  _offlineQueue = [...byId.values()].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  if (_offlineQueue.length > 0) {
+    showSyncBanner("pending");
+    if (!_retryTimerId) _retryTimerId = setInterval(_flushOfflineQueue, 8000);
+  }
 }
 
 async function _flushOfflineQueue() {
@@ -1647,8 +1584,11 @@ async function _flushOfflineQueue() {
   const savedSeriesId = activeSeriesId;
   const savedLocalSeriesId = activeLocalSeriesId;
   const savedSession  = activeSessionForQuiz;
+  const savedLevelKey = currentLevelKey;
+  const savedLevel = currentLevel;
   const savedRefreshPenaltyPending = _refreshPenaltyPending;
   const savedRefreshPenaltyApplied = _refreshPenaltyApplied;
+  const savedRefreshPenaltyAnswerId = _refreshPenaltyAnswerId;
   let restoredSeriesId = savedSeriesId;
   let restoredRefreshPenaltyPending = savedRefreshPenaltyPending;
   let restoredRefreshPenaltyApplied = savedRefreshPenaltyApplied;
@@ -1668,8 +1608,11 @@ async function _flushOfflineQueue() {
       activeSeriesId       = item.seriesId;
       activeLocalSeriesId  = item.localSeriesId;
       activeSessionForQuiz = item.sessionId;
+      currentLevelKey = item.levelKey;
+      currentLevel = LEVELS[item.levelKey] || null;
       _refreshPenaltyPending = !!item.refreshPenaltyPending;
       _refreshPenaltyApplied = !!item.refreshPenaltyApplied;
+      _refreshPenaltyAnswerId = item.refreshPenaltyAnswerId || null;
       _offlineReplayIsForInactiveSeries = item.localSeriesId !== savedLocalSeriesId;
       _seriesStateWritesSuspended = _offlineReplayIsForInactiveSeries;
       pendingSupabaseSaves++;
@@ -1690,12 +1633,15 @@ async function _flushOfflineQueue() {
       // Propager le series_id assigné par le RPC aux items suivants de la même série
       const assignedId = activeSeriesId;
       const localSeriesId = item.localSeriesId;
-      _offlineQueue.shift();
+      _updatePersistedSeriesIdentity(item, assignedId);
+      await _removeOfflineSave(item.clientAnswerId);
       _offlineQueue.forEach(q => {
         if (q.localSeriesId !== localSeriesId) return;
         q.seriesId = assignedId;
         q.refreshPenaltyPending = _refreshPenaltyPending;
         q.refreshPenaltyApplied = _refreshPenaltyApplied;
+        q.refreshPenaltyAnswerId = _refreshPenaltyAnswerId;
+        window.LevelingMathOfflineQueue.put(q).catch(error => console.error("[offline-queue] update failed", error));
       });
       if (localSeriesId === savedLocalSeriesId) {
         restoredSeriesId = assignedId;
@@ -1708,8 +1654,7 @@ async function _flushOfflineQueue() {
       clearInterval(_retryTimerId);
       _retryTimerId = null;
       showSyncBanner("synced");
-      recalibrateCurrentStudentXp("offline_flush")
-        .catch(e => console.error("[xp-recalc] recalcul XP après resync offline échoué:", e));
+      syncXpFromServerQuietly("offline_flush");
       console.log("[offline-queue] flush complete — tout synchronisé");
     }
   } catch (e) {
@@ -1720,8 +1665,11 @@ async function _flushOfflineQueue() {
     activeSeriesId       = restoredSeriesId;
     activeLocalSeriesId  = savedLocalSeriesId;
     activeSessionForQuiz = savedSession;
+    currentLevelKey = savedLevelKey;
+    currentLevel = savedLevel;
     _refreshPenaltyPending = restoredRefreshPenaltyPending;
     _refreshPenaltyApplied = restoredRefreshPenaltyApplied;
+    _refreshPenaltyAnswerId = savedRefreshPenaltyAnswerId;
     if (savedLocalSeriesId && restoredSeriesId !== savedSeriesId) saveSeriesState();
     _retryInProgress = false;
   }
@@ -2143,10 +2091,21 @@ function showQuestion(){
 function isFinishedQuizState(){
   return !quizStarted && Array.isArray(questions) && questions.length > 0 && currentQuestionIndex >= questions.length;
 }
+function getQuizStartEligibility(levelKey, forceNew){
+  const savedState = forceNew ? null : loadSeriesState();
+  const resumeExistingSeries = !!savedState && savedState.levelKey === levelKey;
+  return window.LevelingMathXp.getGeneralLevelEligibility(levelKey, xp, { resumeExistingSeries });
+}
 async function beginQuizStart({ source, levelKey = currentLevelKey, forceNew = false } = {}){
   if(isStartingQuiz){
     console.log("[quiz-start] blocked because already starting", { source, levelKey });
     return;
+  }
+  const eligibility = getQuizStartEligibility(levelKey, forceNew);
+  if (!eligibility.allowed) {
+    console.log("[quiz-start] niveau bloqué", { source, levelKey, xp, reason: eligibility.reason });
+    updateLevelButtons();
+    return false;
   }
   isStartingQuiz = true;
   console.log(`[quiz-start] click ${source || "unknown"}`, {
@@ -2173,6 +2132,14 @@ async function beginQuizStart({ source, levelKey = currentLevelKey, forceNew = f
       showLoadingState("Préparation de la nouvelle série...");
     }
 
+    if (_offlineQueue.length > 0) {
+      if (!navigator.onLine) throw new Error("Des réponses attendent une reconnexion avant la reprise");
+      showLoadingState("Synchronisation des réponses en attente...");
+      if (!_retryInProgress) await _flushOfflineQueue();
+      while (_retryInProgress) await new Promise(resolve => setTimeout(resolve, 50));
+      if (_offlineQueue.length > 0) throw new Error("La synchronisation des réponses en attente a échoué");
+    }
+
     if(levelKey){
       currentLevelKey = levelKey;
       currentLevel = LEVELS[levelKey];
@@ -2194,6 +2161,7 @@ async function beginQuizStart({ source, levelKey = currentLevelKey, forceNew = f
       hasSavedSeries = false;
       _refreshPenaltyApplied = false;
       _refreshPenaltyPending = false;
+      _refreshPenaltyAnswerId = null;
       quizStarted = false;
       updateStreak(0);
     }
@@ -2491,18 +2459,15 @@ function handleTimeout(){
   if(_questionStartTime) _seriesTimes.push(_rt);
   const rollbackSnapshot = { xp, score, streak, questionIndex: currentQuestionIndex, activeSeriesId };
   breakXpBonus();
-  const _timeoutXpDelta = currentLevel.timeout > 0 ? -currentLevel.timeout : 0;
-  _seriesXpDelta += _timeoutXpDelta;
   _seriesQuestionResults.push({ subcategory: _subcat, category: _cat, isCorrect: false, responseTime: _rt });
-  if(currentLevel.timeout>0) applyXp(-currentLevel.timeout);
   submitAnswerInBackground(
-    [false, _rt, _cat, _subcat, _qtext, _expected, "", "timeout"],
+    [false, _rt, _cat, _subcat, _qtext, _expected, "", "timeout", createAnswerSubmissionId()],
     rollbackSnapshot
   );
   updateSeriesProgress();
   playWrongSound();
   animStreak("break"); updateStreak(0);
-  saveSeriesState(); // fige l'état après timeout
+  saveSeriesState(currentQuestionIndex + 1); // a reload must not replay the queued answer
   showCorrectionAndContinue();
 }
 async function checkAnswer(){
@@ -2537,18 +2502,17 @@ async function checkAnswer(){
   const rollbackSnapshot = { xp, score, streak, questionIndex: currentQuestionIndex, activeSeriesId };
   if(_isCorrect){
     const _gain = currentLevel.gain * xpMultiplier;
-    _seriesXpDelta += _gain;
     _seriesQuestionResults.push({ subcategory: _subcat, category: _cat, isCorrect: true, responseTime: _rt });
     score++;
-    applyXp(_gain);
     submitAnswerInBackground(
-      [true, _rt, _cat, _subcat, _qtext, _expected, input, "answer"],
+      [true, _rt, _cat, _subcat, _qtext, _expected, input, "answer", createAnswerSubmissionId()],
       rollbackSnapshot
     );
+    saveSeriesState(currentQuestionIndex + 1);
     updateSeriesProgress();
     playCorrectSound();
     feedbackEl.className = "feedback feedback-good";
-    feedbackEl.textContent = "✅ Bonne réponse ! +" + _gain + " XP" + (xpMultiplier === 2 ? " 🔥 x2" : "");
+    feedbackEl.textContent = "✅ Bonne réponse !" + (xpMultiplier === 2 ? " 🔥 x2" : "");
     triggerFeedbackAnim();
     triggerFlash("good");
     updateStreak(streak + 1); animStreak("pop");
@@ -2562,19 +2526,16 @@ async function checkAnswer(){
     }, 700);
   } else {
     breakXpBonus();
-    const _wrongXpDelta = currentLevel.wrong > 0 ? -currentLevel.wrong : 0;
-    _seriesXpDelta += _wrongXpDelta;
     _seriesQuestionResults.push({ subcategory: _subcat, category: _cat, isCorrect: false, responseTime: _rt });
-    if(currentLevel.wrong > 0) applyXp(-currentLevel.wrong);
     submitAnswerInBackground(
-      [false, _rt, _cat, _subcat, _qtext, _expected, input, "answer"],
+      [false, _rt, _cat, _subcat, _qtext, _expected, input, "answer", createAnswerSubmissionId()],
       rollbackSnapshot
     );
     updateSeriesProgress();
     playWrongSound();
     scoreEl.textContent = score;
     animStreak("break"); updateStreak(0);
-    saveSeriesState(); // fige l'état après mauvaise réponse
+    saveSeriesState(currentQuestionIndex + 1); // a reload must not replay the queued answer
     showCorrectionAndContinue();
   }
 }
@@ -2689,6 +2650,13 @@ function buildCoachingFeedback(pct, avgTime) {
     ${improvementHtml}
     <div class="coaching-objective">🎯 ${action}</div>
   </div>`;
+}
+
+function updateFinishedSeriesXp(){
+  const value = document.getElementById("result-series-xp");
+  if (!value) return;
+  value.textContent = _seriesXpDelta >= 0 ? `+${_seriesXpDelta}` : String(_seriesXpDelta);
+  value.style.color = _seriesXpDelta >= 0 ? "#4ade80" : "#f87171";
 }
 
 function showTargetedProgressHome(){
@@ -2845,7 +2813,7 @@ function endQuiz(){
         </div>
         <div class="result-metric xp">
           <span class="label">XP net</span>
-          <span class="value" style="color:${colorXp(xpNet)}">${fmtXp(xpNet)}</span>
+          <span class="value" id="result-series-xp" style="color:${colorXp(xpNet)}">${pendingSupabaseSaves > 0 || _offlineQueue.length > 0 ? "..." : fmtXp(xpNet)}</span>
         </div>
         <div class="result-metric">
           <span class="label">Série</span>
@@ -2865,23 +2833,11 @@ function endQuiz(){
   showPenaltyBanner(false); // s'assurer que le banner est caché en fin de série
   setQuestionLock(true);
   
-  // Les réponses sont enregistrées via submit_answer ; l'XP final est recalculé
-  // après le flush avec la même formule que le dashboard.
+  // submit_answer maintains the server projections after each confirmed answer.
   if (!hasSavedSeries && pseudo) {
     hasSavedSeries = true;
     console.log("📤 Série finalisée localement — agrégats serveur gérés par submit_answer(), id:", activeSeriesId);
   }
-  backgroundSaveChain
-    .then(() => {
-      if (_offlineQueue.length > 0) {
-        console.log("[xp-recalc] recalcul fin de série différé — réponses hors ligne en attente", {
-          queueLength: _offlineQueue.length
-        });
-        return null;
-      }
-      return recalibrateCurrentStudentXp("end_quiz");
-    })
-    .catch(e => console.error("[xp-recalc] recalcul XP fin de série échoué:", e));
 }
 async function startQuiz({ forceNew = false } = {}){
   showLoadingState("Chargement de ta progression...");
@@ -2925,6 +2881,7 @@ async function startQuiz({ forceNew = false } = {}){
     activeSessionForQuiz = savedState.supabaseSession || null;
     hasSavedSeries     = false;
     _refreshPenaltyApplied = savedState.refreshPenaltyApplied || false;
+    _refreshPenaltyAnswerId = savedState.refreshPenaltyAnswerId || null;
     // Pénalité due si elle n'a pas encore été enregistrée en base pour cette reprise
     _refreshPenaltyPending = !_refreshPenaltyApplied;
     console.log("▶️ Reprise série (anti-reroll) — question", currentQuestionIndex + 1, "/", questions.length,
@@ -2943,6 +2900,7 @@ async function startQuiz({ forceNew = false } = {}){
     activeSessionForQuiz = null;
     _refreshPenaltyApplied = false;
     _refreshPenaltyPending = false;
+    _refreshPenaltyAnswerId = null;
     clearSeriesState();
   }
 
@@ -3034,14 +2992,6 @@ async function selectLevel(levelKey){
     clearXpBonus("level_change");
     clearSeriesState();
     showBonusLostMessage("Bonus x2 perdu en changeant de niveau.");
-  }
-  if(levelKey === "beginner" && xp >= 700){
-    console.log("🚫 Niveau Débutant bloqué (XP:", xp, ")");
-    return;
-  }
-  if(levelKey === "intermediate" && xp >= 1500){
-    console.log("🚫 Niveau Intermédiaire bloqué (XP:", xp, ")");
-    return;
   }
   await beginQuizStart({ source: "level", levelKey, forceNew });
 }
@@ -3272,13 +3222,6 @@ async function syncStudentFromSupabase(authUser = null) {
       return;
     }
 
-    // ── Recalibrage avant hydratation : même formule que le dashboard ───────
-    const recalibratedStudent = await recalculateStudentXpFromResults(student, {
-      updateUi: false,
-      reason: "sync_hydration"
-    });
-    if (recalibratedStudent) student = recalibratedStudent;
-
     // ── Hydratation de l'état élève depuis Supabase (source de vérité) ───────
     console.log("[SYNC] hydration success");
     const manualXpBonus = Number(student.manual_xp_bonus) || 0;
@@ -3307,6 +3250,8 @@ async function syncStudentFromSupabase(authUser = null) {
     updateRankUI();
     renderStats(null);
     updateLevelButtons();
+    await _hydrateOfflineQueue(authUser?.id || getActiveStorageUserId());
+    if (_offlineQueue.length > 0 && navigator.onLine) _flushOfflineQueue();
     console.log("[sync] ✅ UI mise à jour");
   } catch(e) {
     console.error("[sync] ❌ Exception:", e);

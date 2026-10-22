@@ -7,8 +7,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
   <script src="js/config/levels.js"></script>
   <script src="js/config/ranks.js"></script>
+  <script src="js/xp/integrity.js"></script>
   <script src="js/app/targeted-progress-summary.js"></script>
   <script src="js/supabase/client.js"></script>
+  <script src="js/supabase/pagination.js"></script>
   <script>const supabaseClient = _qClient;</script>
 
   <style>
@@ -339,26 +341,11 @@
 <div id="history"></div>
 
 <div class="recalibrate-section">
-  <strong style="color: #fca5a5;">🔧 Recalibrage XP (données historiques)</strong>
-  <p style="font-size: 13px; color: #94a3b8; margin: 6px 0 12px;">Recalcule <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">series_results.xp_gained</code> et <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.xp_total</code> à partir de <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">question_results.xp_delta</code>. L’affichage ajoute <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd;">students.manual_xp_bonus</code>.</p>
-  <button id="recalibrateBtn" onclick="recalibrateXP()" style="background:linear-gradient(135deg,#ef4444,#dc2626);color:white;border:1px solid rgba(239,68,68,.4);padding:9px 20px;border-radius:12px;font-weight:700;cursor:pointer;font-size:13px;box-shadow:0 0 14px rgba(239,68,68,.2);transition:box-shadow .2s,transform .12s;">Recalibrer XP</button>
+  <strong style="color: #fca5a5;">Audit d'intégrité XP</strong>
+  <p style="font-size: 13px; color: #94a3b8; margin: 6px 0 12px;">L'aperçu compare les projections enregistrées au calcul serveur, sans modifier les données. La réparation est une transaction séparée et refuse toute donnée incomplète ou incohérente.</p>
+  <button id="recalibrateBtn" onclick="runXpAudit()" style="background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;border:1px solid rgba(59,130,246,.4);padding:9px 20px;border-radius:12px;font-weight:700;cursor:pointer;font-size:13px;">Lancer l'audit</button>
+  <button id="repairXpBtn" onclick="repairXpFromAudit()" disabled style="background:#7f1d1d;color:white;border:1px solid rgba(239,68,68,.4);padding:9px 20px;border-radius:12px;font-weight:700;cursor:pointer;font-size:13px;margin-left:8px;">Réparer côté serveur</button>
   <pre id="recalibrateLog" style="margin-top: 12px; font-size: 12px; color: #94a3b8; white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></pre>
-</div>
-
-<div class="recalibrate-section" style="background:rgba(96,165,250,.06);border-color:rgba(96,165,250,.22)">
-  <strong style="color:#93c5fd;">🔀 Fusionner deux pseudos</strong>
-  <p style="font-size:13px;color:#94a3b8;margin:6px 0 12px;">Déplace toutes les sessions du <em>pseudo source</em> vers le <em>pseudo cible</em> et les renumérote à la suite. Utile pour réconcilier des doublons de casse (<code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd">Tom</code> → <code style="background:rgba(96,165,250,.1);padding:2px 5px;border-radius:4px;color:#93c5fd">tom</code>).</p>
-  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-    <label style="font-size:12px;color:#94a3b8">Source
-      <select id="mergeSrc" style="margin-left:6px;background:#0f172a;color:white;border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:6px 10px;font-size:13px"></select>
-    </label>
-    <span style="color:#64748b">→</span>
-    <label style="font-size:12px;color:#94a3b8">Cible
-      <select id="mergeTgt" style="margin-left:6px;background:#0f172a;color:white;border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:6px 10px;font-size:13px"></select>
-    </label>
-    <button id="mergeBtn" onclick="mergePseudos()" style="background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;border:1px solid rgba(59,130,246,.4);padding:9px 20px;border-radius:12px;font-weight:700;cursor:pointer;font-size:13px;box-shadow:0 0 14px rgba(59,130,246,.25)">Fusionner</button>
-  </div>
-  <pre id="mergeLog" style="margin-top:6px;font-size:12px;color:#94a3b8;white-space:pre-wrap;max-height:240px;overflow-y:auto"></pre>
 </div>
 
 </div><!-- .dash-wrap -->
@@ -376,6 +363,57 @@
 
   let currentAdminUser = null;
   let dashboardBootstrapped = false;
+  const studentDeletionRequestIds = new Map();
+
+  function createDashboardRequestId() {
+    if (typeof crypto?.randomUUID === "function") return crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map(value => value.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  async function readFunctionError(error) {
+    try {
+      const response = error?.context;
+      if (response && typeof response.clone === "function") {
+        return await response.clone().json();
+      }
+    } catch (parseError) {
+      console.warn("[dashboard][delete-student] réponse d'erreur illisible:", parseError);
+    }
+    return null;
+  }
+
+  async function invokePermanentStudentDeletion(studentId, requestId) {
+    const delays = [0, 1200, 2500];
+    let lastError = null;
+
+    for (let attempt = 0; attempt < delays.length; attempt += 1) {
+      if (delays[attempt] > 0) {
+        await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+      }
+
+      const { data, error } = await supabaseClient.functions.invoke("delete-student", {
+        body: { student_id: studentId, request_id: requestId }
+      });
+      if (!error && data?.ok === true && data?.status === "completed") return data;
+
+      const details = await readFunctionError(error);
+      const message = details?.message || error?.message || "La suppression n'a pas pu être confirmée.";
+      lastError = new Error(message);
+      lastError.code = details?.code || error?.name || "EDGE_FUNCTION_ERROR";
+      lastError.retryable = details?.retryable === true
+        || error?.name === "FunctionsFetchError"
+        || error?.name === "FunctionsRelayError";
+
+      if (!lastError.retryable || attempt === delays.length - 1) break;
+    }
+
+    throw lastError || new Error("La suppression n'a pas pu être confirmée.");
+  }
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, char => ({
@@ -387,20 +425,8 @@
     })[char]);
   }
 
-  function getLevelRules(level) {
-    return (typeof LEVELS === "object" && LEVELS && LEVELS[level]) ? LEVELS[level] : null;
-  }
-
-  function getDisplayedQuestionXpDelta(question, level) {
-    const rawDelta = Number(question?.xp_delta) || 0;
-    if (!question || question.category === "refresh_penalty" || question.is_correct) return rawDelta;
-
-    const rules = getLevelRules(level);
-    if (!rules) return rawDelta;
-
-    const isTimeout = question.user_answer === "";
-    const penalty = Number(isTimeout ? rules.timeout : rules.wrong) || 0;
-    return penalty > 0 ? -penalty : 0;
+  function getDisplayedQuestionXpDelta(question) {
+    return Number(question?.xp_delta) || 0;
   }
 
   async function isAdminUser(user) {
@@ -485,7 +511,6 @@
     dashboardBootstrapped = true;
     try {
       await loadStudents();
-      await populateMergeSelects();
     } catch (e) {
       console.error("[dashboard][admin] erreur chargement dashboard:", e);
       dashboardBootstrapped = false;
@@ -638,156 +663,63 @@
     }
   }
 
-  // ── Recalibrage XP historique ─────────────────────────────────────────────
-  async function recalibrateXP() {
+  let lastXpAudit = [];
+
+  async function runXpAudit() {
     const btn = document.getElementById("recalibrateBtn");
+    const repairBtn = document.getElementById("repairXpBtn");
     const log = document.getElementById("recalibrateLog");
     btn.disabled = true;
-    btn.textContent = "⏳ En cours…";
-    log.textContent = "";
-
-    const addLog = (msg) => {
-      log.textContent += msg + "\n";
-      log.scrollTop = log.scrollHeight;
-    };
-
+    repairBtn.disabled = true;
+    log.textContent = "Audit serveur en cours...";
     try {
-      // ── ÉTAPE 1 : charger question_results (source de vérité) ───────────
-      addLog("━━━ ÉTAPE 1 : question_results ━━━");
-      const qRows = await fetchAllQR(() =>
-        supabaseClient.from("question_results")
-          .select("student_id, series_id, session, xp_delta, is_correct, user_answer, category")
-      );
-      console.log("TOTAL recalibrage :", qRows.length);  // doit être > 1000
-      const nullDelta = qRows.filter(q => q.xp_delta == null).length;
-      addLog(`   ${qRows.length} lignes chargées  |  xp_delta null: ${nullDelta}`);
-
-      // ── ÉTAPE 2 : recalibrer series_results.xp_gained ───────────────────
-      addLog("\n━━━ ÉTAPE 2 : series_results.xp_gained ━━━");
-      const { data: seriesRows, error: sErr } = await supabaseClient
-        .from("series_results")
-        .select("id, xp_gained, student_id, session, level, created_at")
-        .order("created_at", { ascending: true });
-      if (sErr) throw sErr;
-      addLog(`   ${seriesRows.length} séries chargées`);
-
-      // Même formule que loadStudents : getDisplayedQuestionXpDelta applique les
-      // règles de niveau courantes (pénalités plafonnées), computeFlooredXP applique
-      // le plancher courant (total ne descend pas sous 0 entre séries).
-      // Le recalibrage utilise EXACTEMENT cette formule pour que xp_total = ce qui est affiché.
-      const levelBySeriesId = {};
-      seriesRows.forEach(s => { if (s.id != null) levelBySeriesId[s.id] = s.level; });
-
-      const xpBySeriesDisplayed = {};
-      qRows.forEach(q => {
-        if (q.series_id != null)
-          xpBySeriesDisplayed[q.series_id] = (xpBySeriesDisplayed[q.series_id] || 0)
-            + getDisplayedQuestionXpDelta(q, levelBySeriesId[q.series_id]);
+      const { data, error } = await supabaseClient.rpc("audit_xp_integrity", { p_student_id: null });
+      if (error) throw error;
+      lastXpAudit = data || [];
+      const lines = ["Pseudo | Session | XP actuel | XP calculé | Bonus | Séries | Réponses | État"];
+      let hasBlocking = false;
+      let hasDifference = false;
+      lastXpAudit.forEach(row => {
+        const difference = Number(row.calculated_xp) - Number(row.current_xp);
+        hasBlocking ||= !!row.has_blocking_anomaly;
+        hasDifference ||= difference !== 0;
+        lines.push([
+          row.pseudo,
+          `S${row.session}`,
+          row.current_xp,
+          `${row.calculated_xp} (${difference >= 0 ? "+" : ""}${difference})`,
+          row.manual_bonus,
+          row.series_count,
+          row.question_count,
+          row.has_blocking_anomaly ? `BLOQUÉ ${JSON.stringify(row.anomalies)}` : "OK"
+        ].join(" | "));
       });
-
-      let seriesFixed = 0, seriesSkipped = 0;
-      for (const series of seriesRows) {
-        const correctXp = xpBySeriesDisplayed[series.id] ?? 0;
-        if (correctXp === series.xp_gained) { seriesSkipped++; continue; }
-        addLog(`   Série ${series.id} — AVANT: ${series.xp_gained}  CALCULÉ: ${correctXp}`);
-        const { error: uErr } = await supabaseClient
-          .from("series_results").update({ xp_gained: correctXp }).eq("id", series.id);
-        if (uErr) { addLog(`   ⚠️ Erreur écriture série ${series.id}: ${uErr.message}`); continue; }
-        // Lecture de contrôle
-        const { data: check } = await supabaseClient
-          .from("series_results").select("xp_gained").eq("id", series.id).single();
-        addLog(`   ✅ Écrit: ${correctXp}  LU EN BASE: ${check?.xp_gained}  ${check?.xp_gained === correctXp ? "✓" : "⚠️ DIVERGENCE"}`);
-        seriesFixed++;
-      }
-      addLog(`   Corrigées: ${seriesFixed}  |  Déjà correctes: ${seriesSkipped}`);
-
-      // ── ÉTAPE 3 : recalibrer students.xp_total ──────────────────────────
-      addLog("\n━━━ ÉTAPE 3 : students.xp_total ━━━");
-      const { data: studentsBefore, error: stErr } = await supabaseClient
-        .from("students").select("*");
-      if (stErr) throw stErr;
-      addLog(`   ${studentsBefore.length} élèves chargés`);
-      addLog(`   Note : xp_total = computeFlooredXP (même formule que le tableau du dashboard).\n`);
-
-      let studentsFixed = 0, studentsSkipped = 0;
-      const studentResults = []; // pour rapport final
-
-      for (const student of studentsBefore) {
-        const currentSession = student.session || 1;
-        // Séries de l'élève pour la session courante, déjà triées par created_at (ORDER BY dans la requête ÉTAPE 2)
-        const studentSeries = seriesRows.filter(
-          r => r.student_id === student.id && r.session === currentSession
-        );
-        // Même calcul que loadStudents : plancher courant entre séries, pénalités des règles courantes
-        const recalibratedBaseXp = computeFlooredXP(studentSeries, xpBySeriesDisplayed);
-        const manualBonus = Number(student.manual_xp_bonus) || 0;
-        const displayedXpTotal = recalibratedBaseXp + manualBonus;
-        const beforeXpTotal = student.xp_total;
-        const displayPseudo = window.formatPseudo ? window.formatPseudo(student.pseudo) : student.pseudo;
-
-        if (recalibratedBaseXp === beforeXpTotal) {
-          studentsSkipped++;
-          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, recalibratedBaseXp, manualBonus, afterXpTotal: beforeXpTotal, displayed: displayedXpTotal, status: "ok" });
-          continue;
-        }
-
-        addLog(`   ${displayPseudo} S${currentSession}`);
-        addLog(`     AVANT xp_total DB : ${beforeXpTotal}`);
-        addLog(`     computeFlooredXP  : ${recalibratedBaseXp}`);
-        addLog(`     bonus manuel      : ${manualBonus}`);
-        addLog(`     total affiché     : ${displayedXpTotal}`);
-
-        const { error: uErr } = await supabaseClient
-          .from("students").update({ xp_total: recalibratedBaseXp }).eq("id", student.id);
-        if (uErr) {
-          addLog(`     ⚠️ Erreur écriture: ${uErr.message}`);
-          studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, recalibratedBaseXp, manualBonus, afterXpTotal: null, displayed: displayedXpTotal, status: "error" });
-          continue;
-        }
-
-        // Lecture de contrôle après écriture
-        const { data: checkStudent } = await supabaseClient
-          .from("students").select("xp_total").eq("id", student.id).single();
-        const afterXpTotal = checkStudent?.xp_total;
-        const match = afterXpTotal === recalibratedBaseXp;
-        addLog(`     ÉCRIT xp_total    : ${recalibratedBaseXp}`);
-        addLog(`     LU APRÈS ÉCRITURE : ${afterXpTotal}  ${match ? "✓" : "⚠️ DIVERGENCE — trigger Supabase actif ?"}`);
-        addLog(`     AFFICHÉ TABLEAU   : ${displayedXpTotal} (= xp_total + bonus manuel)`);
-
-        studentResults.push({ pseudo: displayPseudo, session: currentSession, beforeXpTotal, recalibratedBaseXp, manualBonus, afterXpTotal, displayed: displayedXpTotal, status: match ? "fixed" : "divergence" });
-        studentsFixed++;
-      }
-
-      addLog(`\n   Corrigés: ${studentsFixed}  |  Déjà corrects: ${studentsSkipped}`);
-
-      // ── RAPPORT FINAL ────────────────────────────────────────────────────
-      addLog("\n━━━ RAPPORT FINAL ━━━");
-      addLog("Pseudo         | Session | xp_total avant | Floored XP | bonus | xp_total après | Affiché");
-      addLog("───────────────|─────────|────────────────|────────────|───────|────────────────|────────");
-      studentResults.forEach(r => {
-        const line = [
-          r.pseudo.padEnd(14),
-          ("S" + r.session).padEnd(7),
-          String(r.beforeXpTotal ?? "?").padEnd(14),
-          String(r.recalibratedBaseXp).padEnd(10),
-          String(r.manualBonus ?? 0).padEnd(5),
-          String(r.afterXpTotal ?? "err").padEnd(14),
-          String(r.displayed ?? r.recalibratedBaseXp) + (r.status === "ok" ? " (inchangé)" : r.status === "fixed" ? " ✅" : " ⚠️")
-        ].join(" | ");
-        addLog(line);
-      });
-
-      // ── RECHARGEMENT DU TABLEAU ──────────────────────────────────────────
-      addLog("\n⏳ Rechargement du tableau…");
-      await loadStudents();
-      addLog("✅ Tableau rechargé. Les XP affichés = computeFlooredXP + bonus manuel.");
-      addLog("   Si les valeurs n'ont pas changé, c'est que le tableau était déjà correct.");
-      btn.textContent = "✅ Terminé — tableau rechargé";
-    } catch(e) {
-      addLog("❌ Erreur fatale : " + e.message);
-      console.error(e);
-      btn.textContent = "❌ Erreur";
+      if (lastXpAudit.length === 0) lines.push("Aucun élève visible pour ce compte.");
+      log.textContent = lines.join("\n");
+      repairBtn.disabled = hasBlocking || !hasDifference || lastXpAudit.length === 0;
+    } catch (error) {
+      lastXpAudit = [];
+      log.textContent = `Audit impossible : ${error.message}`;
+      console.error("[xp-audit]", error);
+    } finally {
       btn.disabled = false;
+    }
+  }
+
+  async function repairXpFromAudit() {
+    const repairBtn = document.getElementById("repairXpBtn");
+    const log = document.getElementById("recalibrateLog");
+    if (!lastXpAudit.length || lastXpAudit.some(row => row.has_blocking_anomaly)) return;
+    if (!confirm("Appliquer la projection XP calculée par le serveur dans une transaction ?")) return;
+    repairBtn.disabled = true;
+    try {
+      const { error } = await supabaseClient.rpc("repair_xp_integrity", { p_student_id: null });
+      if (error) throw error;
+      await runXpAudit();
+      await loadStudents();
+    } catch (error) {
+      log.textContent += `\nRéparation refusée : ${error.message}`;
+      console.error("[xp-repair]", error);
     }
   }
 
@@ -818,12 +750,7 @@
   // Règle : max(0, total + seriesXP) à chaque étape — pas juste max(0, Σ)
   // Exemple : total=0, série=-50 → 0 ; série suivante +40 → 40 (et non 0)
   function computeFlooredXP(seriesOrdered, xpBySeriesId) {
-    let total = 0;
-    for (const s of seriesOrdered) {
-      const seriesXP = xpBySeriesId[s.id] ?? 0;
-      total = Math.max(0, total + seriesXP);
-    }
-    return total;
+    return window.LevelingMathXp.computeFlooredSeriesXp(seriesOrdered, xpBySeriesId);
   }
 
   function getManualXpBonus(student) {
@@ -908,23 +835,8 @@
     return editor;
   }
 
-  // ── Pagination universelle question_results ──────────────────────────────
-  // Supabase tronque silencieusement les résultats à 1000 lignes par défaut.
-  // Ce helper itère par pages de 1000 jusqu'à épuisement des données.
-  // buildQuery : () => SupabaseQueryBuilder — appelé à chaque itération pour appliquer .range()
-  async function fetchAllQR(buildQuery) {
-    const BATCH = 1000;
-    let from = 0;
-    let all = [];
-    while (true) {
-      const { data, error } = await buildQuery().range(from, from + BATCH - 1);
-      if (error) throw error;
-      all = all.concat(data || []);
-      if ((data || []).length < BATCH) break;
-      from += BATCH;
-    }
-    console.log("TOTAL question_results chargés :", all.length);
-    return all;
+  async function fetchAllQR(buildQuery, label = "Supabase rows") {
+    return window.LevelingMathPagination.fetchAllRows(buildQuery, { label });
   }
 
   // Retourne le Σ xp_delta d'une session depuis question_results (source de vérité).
@@ -961,20 +873,16 @@
         authData?.user ? { id: authData.user.id, email: authData.user.email } : null);
     } catch (e) { console.warn("[dashboard] auth.getUser failed:", e); }
 
-    // Requête brute sans filtre, avec count exact
-    console.log("[dashboard] students raw query = SELECT * FROM students (no filter, no limit)");
-    const { data: students, error, status, count } = await supabaseClient
-      .from("students")
-      .select("*", { count: "exact" });
+    const students = await fetchAllQR(
+      () => supabaseClient.from("students").select("*", { count: "exact" }),
+      "students"
+    );
 
-    console.log("[dashboard] students raw query HTTP status =", status);
-    console.log("[dashboard] students raw query returned", (students || []).length, "rows");
-    console.log("[dashboard] students count (exact, post-RLS) =", count);
+    console.log("[dashboard] students raw query returned", students.length, "rows");
     console.log("[dashboard] students raw data =", students);
     console.log("[dashboard] students after mapping =",
       (students || []).map(s => ({ id: s.id, pseudo: s.pseudo, auth_user_id: s.auth_user_id, session: s.session })));
 
-    if (error) { console.error("[dashboard] students query error:", error); return; }
     if (!students || students.length === 0) return;
     if (students.length === 1) {
       console.warn(
@@ -984,44 +892,11 @@
       );
     }
 
-    const studentIds = students.map(s => s.id);
-
-    // Fetch parallèle : question_results (paginé) + series_results (pour ordre chrono)
-    const [qData, { data: seriesData, error: seriesError }] = await Promise.all([
-      fetchAllQR(() =>
-        supabaseClient.from("question_results")
-          .select("student_id, session, series_id, xp_delta, category, is_correct, user_answer")  // series_id nécessaire pour computeFlooredXP
-          .in("student_id", studentIds)
-      ),
-      supabaseClient.from("series_results")
-        .select("id, student_id, session, level, created_at")
-        .in("student_id", studentIds)
-        .order("created_at", { ascending: true })              // ordre chrono obligatoire pour le plancher
-    ]);
-
-    if (seriesError) console.error("Erreur series_results:", seriesError);
-
-    // XP net affiché par série depuis question_results, avec pénalités lues dans LEVELS.
-    const xpBySeriesId = {};
-    const levelBySeriesIdForTable = {};
-    (seriesData || []).forEach(series => {
-      if (series.id != null) levelBySeriesIdForTable[series.id] = series.level;
-    });
-    qData.forEach(q => {
-      if (q.series_id != null)
-        xpBySeriesId[q.series_id] = (xpBySeriesId[q.series_id] || 0) + getDisplayedQuestionXpDelta(q, levelBySeriesIdForTable[q.series_id]);
-    });
-
-    // XP total avec plancher à 0 appliqué après chaque série (running floor)
-    // Remplace l'ancien xpMap basé sur Σ brut qui pouvait produire des valeurs négatives
     const flooredXpMap = {};
     students.forEach(student => {
       const currentSession = student.session || 1;
       const key = `${student.id}_${currentSession}`;
-      const studentSeries = (seriesData || []).filter(
-        r => r.student_id === student.id && r.session === currentSession
-      );
-      flooredXpMap[key] = computeFlooredXP(studentSeries, xpBySeriesId) + getManualXpBonus(student);
+      flooredXpMap[key] = (Number(student.xp_total) || 0) + getManualXpBonus(student);
     });
 
     // Tri par XP floored décroissant
@@ -1085,11 +960,16 @@
 
     const [
       { data: studentRow, error: studentErr },
-      { data: rawSeriesData, error },
+      rawSeriesData,
       targetedProgressResult
     ] = await Promise.all([
       supabaseClient.from("students").select("*").eq("id", studentId).single(),
-      supabaseClient.from("series_results").select("*").eq("student_id", studentId).eq("session", session).order("created_at", { ascending: false }),
+      fetchAllQR(
+        () => supabaseClient.from("series_results").select("*")
+          .eq("student_id", studentId).eq("session", session)
+          .order("created_at", { ascending: false }),
+        "series_results history"
+      ),
       loadAdminTargetedProgress(studentId)
         .then(rows => ({ rows, error: null }))
         .catch(targetedError => ({ rows: null, error: targetedError }))
@@ -1104,10 +984,6 @@
     else            console.log("[dashboard] students returned row =", studentRow);
     if (targetedProgressError) console.error("[dashboard] targeted_skill_progress query error:", targetedProgressError);
 
-    if (error) {
-      console.error("[dashboard] series_results query error:", error);
-      throw new Error("series_results: " + error.message);
-    }
     console.log("[dashboard] series_results returned", (rawSeriesData || []).length, "rows");
     console.log("[dashboard] series_results first 3 =", (rawSeriesData || []).slice(0, 3));
 
@@ -1118,21 +994,22 @@
     let effectiveSession = session;
     if (data.length === 0) {
       console.warn("[dashboard] 0 série pour session demandée — vérification sur toutes les sessions…");
-      const { data: allSess, error: allErr } = await supabaseClient
-        .from("series_results").select("session")
-        .eq("student_id", studentId);
-      if (allErr) console.error("[dashboard] fallback all-sessions error:", allErr);
+      const allSess = await fetchAllQR(
+        () => supabaseClient.from("series_results").select("session").eq("student_id", studentId),
+        "series_results sessions"
+      );
       const availSess = Array.from(new Set((allSess || []).map(r => r.session).filter(s => s != null))).sort((a,b)=>a-b);
       console.log("[dashboard] sessions réellement présentes pour cet élève =", availSess);
       if (!isCurrentStudentRequest(studentId, requestVersion)) return false;
       if (availSess.length > 0) {
         const fallback = availSess.includes(session) ? session : availSess[availSess.length - 1];
         console.warn(`[dashboard] fallback → rechargement session ${fallback} pour student_id ${studentId}`);
-        const { data: fbData, error: fbErr } = await supabaseClient
-          .from("series_results").select("*")
-          .eq("student_id", studentId).eq("session", fallback)
-          .order("created_at", { ascending: false });
-        if (fbErr) { console.error("[dashboard] fallback query error:", fbErr); throw new Error("fallback: " + fbErr.message); }
+        const fbData = await fetchAllQR(
+          () => supabaseClient.from("series_results").select("*")
+            .eq("student_id", studentId).eq("session", fallback)
+            .order("created_at", { ascending: false }),
+          "series_results fallback"
+        );
         if (!isCurrentStudentRequest(studentId, requestVersion)) return false;
         data = fbData || [];
         effectiveSession = fallback;
@@ -1182,10 +1059,10 @@
     // XP cumulé par série : calculé en ordre chrono, stocké par series.id pour affichage en DESC
     // Plancher 0 après chaque série (même règle que sessionXP)
     const xpCumulById = {};
-    let _runningXp = manualBonus;
+    let _runningXp = 0;
     [...data].reverse().forEach(s => {
       _runningXp = Math.max(0, _runningXp + (xpBySeriesId[s.id] ?? 0));
-      xpCumulById[s.id] = _runningXp;
+      xpCumulById[s.id] = _runningXp + manualBonus;
     });
 
     // Rang calculé sur le total floored — cohérent avec le tableau principal
@@ -1303,101 +1180,31 @@
     btnDeleteSession.addEventListener("mouseenter", () => { btnDeleteSession.style.borderColor = "rgba(239,68,68,.45)"; btnDeleteSession.style.boxShadow = "0 0 14px rgba(239,68,68,.15)"; });
     btnDeleteSession.addEventListener("mouseleave", () => { btnDeleteSession.style.borderColor = "rgba(239,68,68,.25)"; btnDeleteSession.style.boxShadow = "none"; });
     btnDeleteSession.addEventListener("click", async () => {
-      if (!confirm(`Supprimer définitivement la session ${session} de ${pseudo} ?\n\nLes sessions suivantes seront renumérotées (S${session+1} → S${session}, etc.).\n\nAction irréversible.`)) return;
+      if (!confirm(`Supprimer définitivement la session ${session} de ${pseudo} ?\n\nToutes ses séries et réponses seront supprimées dans une transaction serveur. Les autres sessions et le bonus manuel seront conservés.\n\nAction irréversible.`)) return;
+      btnDeleteSession.disabled = true;
       try {
-        // 1. Récupérer les series_id exacts de cette session
-        const { data: seriesToDelete, error: seriesErr } = await supabaseClient
-          .from("series_results")
-          .select("id")
-          .eq("student_id", studentId)
-          .eq("session", session);
-        if (seriesErr) throw seriesErr;
+        const { data, error } = await supabaseClient.rpc("admin_delete_student_session", {
+          p_student_id: studentId,
+          p_session: session
+        });
+        if (error) throw error;
+        const result = Array.isArray(data) ? data[0] : data;
+        const newCurrent = Number(result?.current_session) || 1;
+        const remainingSeries = Number(result?.remaining_series_count) || 0;
 
-        // 2. Supprimer question_results via series_id (ciblage exact, pas via numéro de session)
-        if (seriesToDelete && seriesToDelete.length > 0) {
-          const ids = seriesToDelete.map(s => s.id);
-          const { error: qErr } = await supabaseClient
-            .from("question_results")
-            .delete()
-            .in("series_id", ids);
-          if (qErr) throw qErr;
-        }
-
-        // 3. Supprimer series_results de cette session
-        const { error: srErr } = await supabaseClient
-          .from("series_results")
-          .delete()
-          .eq("student_id", studentId)
-          .eq("session", session);
-        if (srErr) throw srErr;
-
-        // 4. Renumérotation : toutes les sessions > session décrémentées de 1.
-        //    Ordre ASC obligatoire — le trou laissé par la suppression garantit
-        //    qu'on ne collisionne jamais (oldS → oldS-1 est toujours libre).
-        const { data: higherSeries, error: hsErr } = await supabaseClient
-          .from("series_results").select("session")
-          .eq("student_id", studentId).gt("session", session);
-        if (hsErr) throw hsErr;
-        const higherSessions = Array.from(new Set((higherSeries || []).map(r => r.session)))
-          .sort((a, b) => a - b);
-        for (const oldS of higherSessions) {
-          const newS = oldS - 1;
-          const { error: e1 } = await supabaseClient
-            .from("series_results").update({ session: newS })
-            .eq("student_id", studentId).eq("session", oldS);
-          if (e1) throw e1;
-          const { error: e2 } = await supabaseClient
-            .from("question_results").update({ session: newS })
-            .eq("student_id", studentId).eq("session", oldS);
-          if (e2) throw e2;
-        }
-
-        // 5. Mettre à jour students.session + agrégats sur la nouvelle session courante
-        const { data: remaining } = await supabaseClient
-          .from("series_results").select("session")
-          .eq("student_id", studentId)
-          .order("session", { ascending: false }).limit(1);
-        const newCurrent = remaining?.[0]?.session ?? null;
-
-        if (newCurrent == null) {
-          await supabaseClient.from("students").update({
-            session: 1, xp_total: 0, best_score: 0, best_avg_time: null, games_played: 0,
-            updated_at: new Date().toISOString()
-          }).eq("id", studentId);
-        } else {
-          const { data: curSeries } = await supabaseClient
-            .from("series_results").select("score, avg_time")
-            .eq("student_id", studentId).eq("session", newCurrent);
-          const curQr = await fetchAllQR(() =>
-            supabaseClient.from("question_results").select("xp_delta")
-              .eq("student_id", studentId).eq("session", newCurrent)
-          );
-          const sumXp = (curQr || []).reduce((a, r) => a + (Number(r.xp_delta) || 0), 0);
-          const arr = curSeries || [];
-          const bestScore = arr.length ? Math.max(...arr.map(r => r.score || 0)) : 0;
-          const validTimes = arr.map(r => r.avg_time).filter(t => t != null);
-          const bestAvgTime = validTimes.length ? Math.min(...validTimes) : null;
-          await supabaseClient.from("students").update({
-            session: newCurrent,
-            xp_total: Math.max(0, sumXp),
-            best_score: bestScore,
-            best_avg_time: bestAvgTime,
-            games_played: arr.length,
-            updated_at: new Date().toISOString()
-          }).eq("id", studentId);
-        }
-
-        console.log(`Session ${session} supprimée pour ${pseudo} — ${higherSessions.length} session(s) renumérotée(s).`);
+        console.log(`Session ${session} supprimée pour ${pseudo}.`, result);
         await loadStudents();
 
-        if (newCurrent != null) {
+        if (remainingSeries > 0) {
           await loadStudentData(studentId, pseudo, newCurrent);
         } else {
           document.getElementById("history").innerHTML = `<p style="color: #94a3b8; margin-top: 8px;">Toutes les sessions ont été supprimées.</p>`;
         }
       } catch(e) {
         console.error("Erreur suppression session:", e);
-        alert("Erreur lors de la suppression.");
+        alert(`Suppression annulée : ${e.message || "erreur serveur"}`);
+      } finally {
+        btnDeleteSession.disabled = false;
       }
     });
     historyDiv.appendChild(btnDeleteSession);
@@ -1422,20 +1229,43 @@
     btnDeleteStudent.addEventListener("mouseenter", () => btnDeleteStudent.style.background = "#991b1b");
     btnDeleteStudent.addEventListener("mouseleave", () => btnDeleteStudent.style.background = "#7f1d1d");
     btnDeleteStudent.addEventListener("click", async () => {
-      if (!confirm(`Supprimer définitivement l'élève "${pseudo}" et toutes ses données ?\n\nCette action est irréversible.`)) return;
+      const confirmed = confirm(
+        `SUPPRESSION DÉFINITIVE DE « ${pseudo} »\n\n` +
+        "Le compte de connexion Supabase Auth, le profil, toutes les séries, réponses, progressions ciblées et associations parent seront supprimés.\n\n" +
+        "Cette action est irréversible. Continuer ?"
+      );
+      if (!confirmed) return;
+
+      const typedPseudo = prompt(
+        `Pour confirmer l'élève sélectionné, saisis exactement :\n${pseudo}`,
+        ""
+      );
+      if (typedPseudo === null) return;
+      if (typedPseudo.trim() !== String(pseudo).trim()) {
+        alert("Confirmation incorrecte : aucune donnée n'a été supprimée.");
+        return;
+      }
+
+      const requestId = studentDeletionRequestIds.get(studentId) || createDashboardRequestId();
+      studentDeletionRequestIds.set(studentId, requestId);
+      const originalText = btnDeleteStudent.textContent;
+      btnDeleteStudent.disabled = true;
+      btnDeleteStudent.textContent = "Suppression en cours...";
       try {
-        await supabaseClient.from("question_results").delete().eq("student_id", studentId);
-        await supabaseClient.from("series_results").delete().eq("student_id", studentId);
-        await supabaseClient.from("students").delete().eq("id", studentId);
-        console.log(`Élève ${pseudo} supprimé`);
-        // Reset localStorage côté élève pour qu'il puisse saisir un nouveau pseudo
-        localStorage.removeItem("leveling_math_v38_save");
-        localStorage.removeItem("currentSession");
+        const result = await invokePermanentStudentDeletion(studentId, requestId);
+        studentDeletionRequestIds.delete(studentId);
+        console.log(`Élève ${pseudo} et compte Auth supprimés.`, result);
         await loadStudents();
-        document.getElementById("history").innerHTML = `<p style="color: #94a3b8; margin-top: 8px;">Élève "${escapeHtml(pseudo)}" supprimé.</p>`;
+        document.getElementById("history").innerHTML = `<p style="color: #94a3b8; margin-top: 8px;">Élève "${escapeHtml(pseudo)}" et compte de connexion supprimés définitivement.</p>`;
       } catch(e) {
         console.error("Erreur suppression élève:", e);
-        alert("Erreur lors de la suppression.");
+        alert(
+          `Suppression non confirmée : ${e.message || "erreur serveur"}\n\n` +
+          "Aucun message de réussite n'a été affiché. Tu peux réessayer : la même demande sécurisée sera reprise."
+        );
+      } finally {
+        btnDeleteStudent.disabled = false;
+        btnDeleteStudent.textContent = originalText;
       }
     });
     historyDiv.appendChild(btnDeleteStudent);
@@ -1887,177 +1717,6 @@
     historyDiv.appendChild(tableWrap);
   }
 
-  // ── Fusion de pseudos (admin) ────────────────────────────────────────────
-  async function populateMergeSelects() {
-    console.log("[dashboard] populateMergeSelects — BEGIN");
-    const src = document.getElementById("mergeSrc");
-    const tgt = document.getElementById("mergeTgt");
-    if (!src || !tgt) return;
-
-    console.log("[dashboard] merge raw query = SELECT id, pseudo FROM students ORDER BY pseudo (no filter, no limit)");
-    const { data: students, error, status, count } = await supabaseClient
-      .from("students")
-      .select("id, pseudo", { count: "exact" })
-      .order("pseudo", { ascending: true });
-
-    console.log("[dashboard] merge raw query HTTP status =", status);
-    console.log("[dashboard] merge raw query returned", (students || []).length, "rows");
-    console.log("[dashboard] merge count (exact, post-RLS) =", count);
-    console.log("[dashboard] merge raw data =", students);
-
-    if (error) { console.error("[dashboard] populateMergeSelects error:", error); return; }
-
-    src.innerHTML = "";
-    tgt.innerHTML = "";
-    const optionsLog = [];
-    (students || []).forEach(s => {
-      const label = window.formatPseudo ? window.formatPseudo(s.pseudo) : s.pseudo;
-      src.appendChild(new Option(label, s.id));
-      tgt.appendChild(new Option(label, s.id));
-      optionsLog.push({ id: s.id, label });
-    });
-    console.log("[dashboard] merge select options =", optionsLog);
-    if ((students || []).length > 1) tgt.selectedIndex = 1;
-  }
-
-  async function mergePseudos() {
-    const btn = document.getElementById("mergeBtn");
-    const log = document.getElementById("mergeLog");
-    const srcSel = document.getElementById("mergeSrc");
-    const tgtSel = document.getElementById("mergeTgt");
-    log.textContent = "";
-    const addLog = (m) => { log.textContent += m + "\n"; log.scrollTop = log.scrollHeight; };
-
-    const srcId = srcSel.value;
-    const tgtId = tgtSel.value;
-    const srcLabel = srcSel.options[srcSel.selectedIndex]?.text || srcId;
-    const tgtLabel = tgtSel.options[tgtSel.selectedIndex]?.text || tgtId;
-
-    if (!srcId || !tgtId) { addLog("❌ Sélectionne une source et une cible."); return; }
-    if (srcId === tgtId) { addLog("❌ Source et cible identiques."); return; }
-
-    const ok = confirm(
-      `Les sessions de « ${srcLabel} » seront fusionnées dans « ${tgtLabel} » ` +
-      `et renumérotées à la suite.\nLe pseudo « ${srcLabel} » sera ensuite supprimé.\n` +
-      `Action irréversible. Continuer ?`
-    );
-    if (!ok) { addLog("⏹️ Annulé."); return; }
-
-    btn.disabled = true;
-    const originalBtnText = btn.textContent;
-    btn.textContent = "⏳ Fusion…";
-
-    try {
-      // 1. Charger source + cible
-      const [srcRes, tgtRes] = await Promise.all([
-        supabaseClient.from("students").select("*").eq("id", srcId).single(),
-        supabaseClient.from("students").select("*").eq("id", tgtId).single()
-      ]);
-      if (srcRes.error || !srcRes.data) throw new Error("Source introuvable: " + (srcRes.error?.message || ""));
-      if (tgtRes.error || !tgtRes.data) throw new Error("Cible introuvable: " + (tgtRes.error?.message || ""));
-      const srcStu = srcRes.data, tgtStu = tgtRes.data;
-      const srcDisp = window.formatPseudo ? window.formatPseudo(srcStu.pseudo) : srcStu.pseudo;
-      const tgtDisp = window.formatPseudo ? window.formatPseudo(tgtStu.pseudo) : tgtStu.pseudo;
-      addLog(`Source : ${srcDisp} (id=${srcStu.id}, session=${srcStu.session})`);
-      addLog(`Cible  : ${tgtDisp} (id=${tgtStu.id}, session=${tgtStu.session})`);
-
-      // 2. Sessions distinctes côté source (ASC)
-      const { data: srcSeries, error: e3 } = await supabaseClient
-        .from("series_results").select("session").eq("student_id", srcStu.id);
-      if (e3) throw e3;
-      const srcSessions = Array.from(new Set((srcSeries || []).map(r => r.session).filter(s => s != null)))
-        .sort((a, b) => a - b);
-      addLog(srcSessions.length
-        ? `Sessions source à déplacer : ${srcSessions.join(", ")}`
-        : "ℹ️ Aucune session côté source.");
-
-      // 3. Plus grand numéro de session côté cible (series ∪ questions ∪ students.session)
-      const [tgtSeriesRes, tgtQrRes] = await Promise.all([
-        supabaseClient.from("series_results").select("session").eq("student_id", tgtStu.id),
-        supabaseClient.from("question_results").select("session").eq("student_id", tgtStu.id)
-      ]);
-      const tgtAllSess = [
-        ...((tgtSeriesRes.data) || []).map(r => r.session),
-        ...((tgtQrRes.data) || []).map(r => r.session),
-        tgtStu.session
-      ].filter(s => s != null);
-      const tgtMaxSession = tgtAllSess.length ? Math.max(...tgtAllSess) : 0;
-      addLog(`Session max cible avant fusion : ${tgtMaxSession}`);
-
-      // 4. Table de renumérotation
-      const remap = {};
-      srcSessions.forEach((oldS, i) => { remap[oldS] = tgtMaxSession + i + 1; });
-      srcSessions.forEach(s => addLog(`   S${s} → S${remap[s]}`));
-
-      // 5. Appliquer la renumérotation (DESC pour éviter toute collision même intra-source)
-      const sessionsDesc = [...srcSessions].sort((a, b) => b - a);
-      for (const oldS of sessionsDesc) {
-        const newS = remap[oldS];
-        const { error: uErr1 } = await supabaseClient.from("series_results")
-          .update({ student_id: tgtStu.id, session: newS })
-          .eq("student_id", srcStu.id).eq("session", oldS);
-        if (uErr1) throw new Error(`series_results S${oldS}: ${uErr1.message}`);
-        const { error: uErr2 } = await supabaseClient.from("question_results")
-          .update({ student_id: tgtStu.id, session: newS })
-          .eq("student_id", srcStu.id).eq("session", oldS);
-        if (uErr2) throw new Error(`question_results S${oldS}: ${uErr2.message}`);
-        addLog(`✅ Déplacé S${oldS} → S${newS}`);
-      }
-
-      // 6. Sécurité : rattacher tout résidu (session NULL) à la cible
-      await supabaseClient.from("series_results")
-        .update({ student_id: tgtStu.id }).eq("student_id", srcStu.id);
-      await supabaseClient.from("question_results")
-        .update({ student_id: tgtStu.id }).eq("student_id", srcStu.id);
-
-      // 7. Recalcul agrégats cible (session courante = max après fusion)
-      const newCurrentSession = (tgtMaxSession + srcSessions.length) || tgtMaxSession || 1;
-      const { data: tgtSeriesFinal } = await supabaseClient
-        .from("series_results").select("score, avg_time")
-        .eq("student_id", tgtStu.id).eq("session", newCurrentSession);
-      const tgtQrFinal = await fetchAllQR(() =>
-        supabaseClient.from("question_results")
-          .select("xp_delta")
-          .eq("student_id", tgtStu.id).eq("session", newCurrentSession)
-      );
-      const sumXp = (tgtQrFinal || []).reduce((a, r) => a + (Number(r.xp_delta) || 0), 0);
-      const seriesArr = tgtSeriesFinal || [];
-      const bestScore = seriesArr.length ? Math.max(...seriesArr.map(r => r.score || 0)) : 0;
-      const validTimes = seriesArr.map(r => r.avg_time).filter(t => t != null);
-      const bestAvgTime = validTimes.length ? Math.min(...validTimes) : null;
-      const gamesPlayed = seriesArr.length;
-      const mergedManualBonus = getManualXpBonus(tgtStu) + getManualXpBonus(srcStu);
-
-      const { error: updErr } = await supabaseClient.from("students").update({
-        session: newCurrentSession,
-        manual_xp_bonus: mergedManualBonus,
-        xp_total: Math.max(0, sumXp),
-        best_score: bestScore,
-        best_avg_time: bestAvgTime,
-        games_played: gamesPlayed,
-        updated_at: new Date().toISOString()
-      }).eq("id", tgtStu.id);
-      if (updErr) throw new Error("Update cible: " + updErr.message);
-      addLog(`✅ Cible recalculée — session=${newCurrentSession}, xp_total=${Math.max(0, sumXp)}, bonus manuel=${mergedManualBonus}, affiché=${Math.max(0, sumXp) + mergedManualBonus}, best_score=${bestScore}, best_avg_time=${bestAvgTime ?? "—"}, games_played=${gamesPlayed}`);
-
-      // 8. Supprimer le pseudo source
-      const { error: delErr } = await supabaseClient.from("students").delete().eq("id", srcStu.id);
-      if (delErr) throw new Error("Suppression source: " + delErr.message);
-      addLog(`🗑️ Pseudo source « ${srcDisp} » supprimé.`);
-
-      addLog(`\n✅ Fusion terminée : « ${srcDisp} » → « ${tgtDisp} ».`);
-      btn.textContent = "✅ Fusionné";
-
-      await loadStudents();
-      await populateMergeSelects();
-      setTimeout(() => { btn.textContent = originalBtnText; btn.disabled = false; }, 2000);
-    } catch (e) {
-      console.error(e);
-      addLog("❌ " + e.message);
-      btn.textContent = "❌ Erreur";
-      setTimeout(() => { btn.textContent = originalBtnText; btn.disabled = false; }, 2500);
-    }
-  }
 
 </script>
 
