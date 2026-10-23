@@ -4,7 +4,7 @@
 async function saveQuestionResult(
   isCorrect, responseTime, category,
   subcategory = null, questionText = null, expectedAnswer = null, userAnswer = null,
-  answerKind = "answer", clientAnswerId = null
+  answerKind = "answer", clientAnswerId = null, seriesContext = null
 ) {
   if (!pseudo || typeof window.saveStudent !== "function") {
     console.error("saveQuestionResult cancelled: student identity is unavailable");
@@ -15,18 +15,61 @@ async function saveQuestionResult(
     return false;
   }
 
+  const hasSeriesContext = !!seriesContext?.localSeriesId;
+  let seriesIdForSave = hasSeriesContext ? (seriesContext.seriesId || null) : activeSeriesId;
+  let sessionForSave = hasSeriesContext ? (seriesContext.sessionId || null) : activeSessionForQuiz;
+  const levelKeyForSave = hasSeriesContext ? seriesContext.levelKey : currentLevelKey;
+  let refreshPenaltyPending = hasSeriesContext
+    ? !!seriesContext.refreshPenaltyPending
+    : _refreshPenaltyPending;
+  let refreshPenaltyApplied = hasSeriesContext
+    ? !!seriesContext.refreshPenaltyApplied
+    : _refreshPenaltyApplied;
+  let refreshPenaltyAnswerId = hasSeriesContext
+    ? (seriesContext.refreshPenaltyAnswerId || null)
+    : _refreshPenaltyAnswerId;
+
+  function appliesToActiveSeries() {
+    if (!hasSeriesContext) return true;
+    const activeOwner = typeof getActiveStorageUserId === "function" ? getActiveStorageUserId() : null;
+    return seriesContext.localSeriesId === activeLocalSeriesId
+      && (!seriesContext.ownerAuthUserId || !activeOwner || seriesContext.ownerAuthUserId === activeOwner);
+  }
+
+  function updateSeriesContext() {
+    if (!hasSeriesContext) return;
+    seriesContext.seriesId = seriesIdForSave;
+    seriesContext.sessionId = sessionForSave;
+    seriesContext.refreshPenaltyPending = refreshPenaltyPending;
+    seriesContext.refreshPenaltyApplied = refreshPenaltyApplied;
+    seriesContext.refreshPenaltyAnswerId = refreshPenaltyAnswerId;
+  }
+
+  function updateActiveSeriesIdentity() {
+    if (!appliesToActiveSeries()) return;
+    activeSeriesId = seriesIdForSave;
+    activeSessionForQuiz = sessionForSave;
+    _refreshPenaltyPending = refreshPenaltyPending;
+    _refreshPenaltyApplied = refreshPenaltyApplied;
+    _refreshPenaltyAnswerId = refreshPenaltyAnswerId;
+  }
+
   try {
     const student = await window.saveStudent(pseudo);
     if (!student) return false;
-    if (activeSessionForQuiz == null) activeSessionForQuiz = student.session || 1;
+    if (sessionForSave == null) sessionForSave = student.session || 1;
+    updateSeriesContext();
+    updateActiveSeriesIdentity();
 
-    if (_refreshPenaltyPending) {
-      if (!_refreshPenaltyAnswerId) _refreshPenaltyAnswerId = createAnswerSubmissionId();
+    if (refreshPenaltyPending) {
+      if (!refreshPenaltyAnswerId) refreshPenaltyAnswerId = createAnswerSubmissionId();
+      updateSeriesContext();
+      updateActiveSeriesIdentity();
       const { data: penaltyData, error: penaltyError } = await _qClient.rpc("submit_answer", {
         p_student_id: student.id,
-        p_series_id: activeSeriesId,
-        p_session: activeSessionForQuiz,
-        p_level: currentLevelKey,
+        p_series_id: seriesIdForSave,
+        p_session: sessionForSave,
+        p_level: levelKeyForSave,
         p_category: "refresh_penalty",
         p_subcategory: null,
         p_question_text: null,
@@ -35,34 +78,42 @@ async function saveQuestionResult(
         p_is_correct: false,
         p_response_time: null,
         p_answer_kind: "refresh_penalty",
-        p_client_answer_id: _refreshPenaltyAnswerId
+        p_client_answer_id: refreshPenaltyAnswerId
       });
 
       if (penaltyError || !penaltyData?.series_id) {
-        _refreshPenaltyPending = true;
-        _refreshPenaltyApplied = false;
-        saveSeriesState();
-        showPenaltyBanner(true);
+        refreshPenaltyPending = true;
+        refreshPenaltyApplied = false;
+        updateSeriesContext();
+        updateActiveSeriesIdentity();
+        if (appliesToActiveSeries()) {
+          saveSeriesState();
+          showPenaltyBanner(true);
+        }
         console.error("Refresh penalty was not confirmed by submit_answer", penaltyError || penaltyData);
         return false;
       }
 
-      activeSeriesId = penaltyData.series_id;
-      _refreshPenaltyPending = false;
-      _refreshPenaltyApplied = true;
-      if (typeof applyConfirmedXpSnapshot === "function") applyConfirmedXpSnapshot(penaltyData);
-      if (!_offlineReplayIsForInactiveSeries) {
-        _seriesXpDelta = Number(penaltyData.series_xp_gained) || 0;
+      seriesIdForSave = penaltyData.series_id;
+      refreshPenaltyPending = false;
+      refreshPenaltyApplied = true;
+      updateSeriesContext();
+      updateActiveSeriesIdentity();
+      if (appliesToActiveSeries() && typeof applyConfirmedXpSnapshot === "function") {
+        applyConfirmedXpSnapshot(penaltyData);
       }
-      saveSeriesState();
-      showPenaltyBanner(false);
+      if (appliesToActiveSeries()) {
+        _seriesXpDelta = Number(penaltyData.series_xp_gained) || 0;
+        saveSeriesState();
+        showPenaltyBanner(false);
+      }
     }
 
     const payload = {
       p_student_id: student.id,
-      p_series_id: activeSeriesId,
-      p_session: activeSessionForQuiz,
-      p_level: currentLevelKey,
+      p_series_id: seriesIdForSave,
+      p_session: sessionForSave,
+      p_level: levelKeyForSave,
       p_category: category,
       p_subcategory: subcategory,
       p_question_text: questionText,
@@ -90,8 +141,10 @@ async function saveQuestionResult(
       return false;
     }
 
-    activeSeriesId = data.series_id;
-    if (!_offlineReplayIsForInactiveSeries) {
+    seriesIdForSave = data.series_id;
+    updateSeriesContext();
+    updateActiveSeriesIdentity();
+    if (appliesToActiveSeries()) {
       _seriesXpDelta = Number(data.series_xp_gained) || 0;
       if (typeof applyConfirmedXpSnapshot === "function") applyConfirmedXpSnapshot(data);
       if (typeof updateFinishedSeriesXp === "function") updateFinishedSeriesXp();

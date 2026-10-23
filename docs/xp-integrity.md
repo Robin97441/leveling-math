@@ -58,4 +58,23 @@ Before production, apply the migration to a disposable Supabase project and depl
 
 ## Deployment
 
-Apply `supabase/migrations/20261022_xp_integrity.sql`, deploy `supabase/functions/delete-student`, and only then deploy the matching dashboard/client. The migration intentionally disables the legacy 12-argument `submit_answer`; deploying only one side will make general-mode submissions fail safely instead of silently using a non-idempotent path.
+### Migration history
+
+`20261021_baseline.sql` is a schema-only snapshot made for an empty local database. It is not an incremental production migration and must stay outside `supabase/migrations/`. Do not include it in `supabase db push` and do not mark it as applied remotely without first proving that the remote schema is the snapshot it represents.
+
+Before any production command, compare local and remote migration history. The production project must already record `20260922_add_leveling_objective.sql` and `20260929_admin_targeted_progress.sql`, or their effects must be verified before repairing migration history. A history repair records migration state; it must never be used to conceal missing SQL objects.
+
+### Release order
+
+1. Take a production backup or confirm point-in-time recovery, then perform the read-only prerequisite checks for cascade foreign keys, shared `students.auth_user_id` values, and XP anomalies.
+2. Apply only `20261022_xp_integrity.sql`. The transaction aborts as a unit if a prerequisite fails.
+3. Verify the 13-argument `submit_answer`, its revoked legacy overload, admin RPC permissions, triggers, indexes, and `admin_student_deletion_requests` RLS before accepting traffic from the new frontend.
+4. Deploy `supabase/functions/delete-student` and verify an unauthenticated/non-admin request is rejected. Use only a fictitious student for a destructive smoke test.
+5. Deploy the matching dashboard and student application last.
+6. Run one normal series, one offline/reconnection series, XP audit preview, targeted-mode smoke tests, and dashboard read operations. Confirm that ten general answers share one `series_id`.
+
+The migration intentionally disables the legacy 12-argument `submit_answer`. During the interval after SQL and before the frontend release, an old client fails safely and keeps its answer queued instead of silently using a non-idempotent path.
+
+### Rollback
+
+Do not attempt an ad hoc reverse migration after answers have been accepted with `client_answer_id`. Pause writes and prefer a forward fix. The frontend and Edge Function can be reverted independently only while retaining a client compatible with the 13-argument RPC. If the database migration itself must be undone, restore the pre-release database backup/PITR snapshot during a maintenance window, then redeploy the matching previous frontend and function versions together.

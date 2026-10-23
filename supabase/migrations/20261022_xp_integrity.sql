@@ -168,7 +168,8 @@ begin
 end;
 $$;
 
-revoke all on function public.calculate_student_xp_projection(uuid, integer) from public;
+revoke all on function public.calculate_student_xp_projection(uuid, integer)
+  from public, anon, authenticated;
 
 create or replace function public.audit_xp_integrity(p_student_id uuid default null)
 returns table (
@@ -301,7 +302,8 @@ begin
 end;
 $$;
 
-revoke all on function public.audit_xp_integrity(uuid) from public;
+revoke all on function public.audit_xp_integrity(uuid)
+  from public, anon, authenticated;
 grant execute on function public.audit_xp_integrity(uuid) to authenticated;
 
 -- Internal projection rebuild shared by administrative transactions. It is
@@ -456,7 +458,8 @@ begin
 end;
 $$;
 
-revoke all on function public.repair_xp_integrity(uuid) from public;
+revoke all on function public.repair_xp_integrity(uuid)
+  from public, anon, authenticated;
 grant execute on function public.repair_xp_integrity(uuid) to authenticated;
 
 create or replace function public.protect_student_xp_projection()
@@ -494,6 +497,9 @@ begin
 end;
 $$;
 
+revoke all on function public.protect_student_xp_projection()
+  from public, anon, authenticated;
+
 drop trigger if exists protect_student_xp_projection on public.students;
 create trigger protect_student_xp_projection
 before insert or update on public.students
@@ -521,6 +527,9 @@ begin
   return new;
 end;
 $$;
+
+revoke all on function public.protect_student_auth_identity()
+  from public, anon, authenticated;
 
 drop trigger if exists protect_student_auth_identity on public.students;
 create trigger protect_student_auth_identity
@@ -552,6 +561,9 @@ begin
   return new;
 end;
 $$;
+
+revoke all on function public.protect_xp_accounting_fields()
+  from public, anon, authenticated;
 
 drop trigger if exists protect_question_xp_accounting on public.question_results;
 create trigger protect_question_xp_accounting
@@ -602,7 +614,8 @@ begin
 end;
 $$;
 
-revoke all on function public.start_student_session(uuid) from public;
+revoke all on function public.start_student_session(uuid)
+  from public, anon, authenticated;
 grant execute on function public.start_student_session(uuid) to authenticated;
 
 create or replace function public.admin_set_student_session(
@@ -635,7 +648,8 @@ begin
 end;
 $$;
 
-revoke all on function public.admin_set_student_session(uuid, integer, integer) from public;
+revoke all on function public.admin_set_student_session(uuid, integer, integer)
+  from public, anon, authenticated;
 grant execute on function public.admin_set_student_session(uuid, integer, integer) to authenticated;
 
 create or replace function public.admin_delete_student_session(
@@ -1215,7 +1229,8 @@ begin
 end;
 $$;
 
-revoke all on function public.submit_answer(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text, uuid) from public;
+revoke all on function public.submit_answer(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text, uuid)
+  from public, anon, authenticated;
 grant execute on function public.submit_answer(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text, uuid) to authenticated;
 
 create or replace function public.submit_answer(
@@ -1242,6 +1257,7 @@ begin
 end;
 $$;
 
-revoke all on function public.submit_answer(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text) from public;
+revoke all on function public.submit_answer(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text)
+  from public, anon, authenticated;
 
 commit;

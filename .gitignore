@@ -1,2 +1,9 @@
 .DS_Store
 .vscode/
+
+# Local Supabase diagnostics and backups
+schema_leveling_math.sql
+supabase/migrations_backup/
+supabase/snippets/
+js/supabase/*.backup.js*
+js/supabase/*_leveling_math.zip

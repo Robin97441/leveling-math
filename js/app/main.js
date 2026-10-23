@@ -23,13 +23,12 @@ let _refreshPenaltyPending = false; // true entre la reprise (startQuiz) et la p
 let _refreshPenaltyAnswerId = null; // stable across reload/retry for RPC idempotency
 let isSubmitting = false;           // verrou très court contre le double clic.
 let pendingSupabaseSaves = 0;       // sauvegardes submit_answer en arrière-plan.
-let backgroundSaveChain = Promise.resolve(); // garantit l'ordre des RPC submit_answer.
+let backgroundSaveChain = Promise.resolve(); // queue commune aux sauvegardes normales et offline.
 let _offlineQueue = [];             // saves en attente, regroupées par localSeriesId.
+const _seriesSaveCoordinator = window.LevelingMathOfflineQueue.createSeriesSaveCoordinator();
 let _retryTimerId = null;
 let _retryInProgress = false;
 let _syncBannerTimeout = null;
-let _seriesStateWritesSuspended = false;
-let _offlineReplayIsForInactiveSeries = false;
 let isStartingQuiz = false;
 let countdownTimeouts = [];
 let countdownOverlayEl = null;
@@ -411,7 +410,6 @@ function loadGame(){
 // Appelé dès le démarrage de la série (pas après la première réponse).
 // Cela empêche le reroll : un refresh retrouve exactement les mêmes questions.
 function saveSeriesState(questionIndexOverride = currentQuestionIndex){
-  if (_seriesStateWritesSuspended) return;
   try {
     const authUserId = getActiveStorageUserId();
     const storageKey = getSeriesStateStorageKey(authUserId);
@@ -1420,13 +1418,11 @@ function syncXpFromServerQuietly(reason = "background") {
 
 function submitAnswerInBackground(args, rollbackSnapshot) {
   const ownerAuthUserId = getActiveStorageUserId();
-  const clientAnswerId = args[8];
-  const localSeriesIdAtSubmit = activeLocalSeriesId;
   if (_refreshPenaltyPending && !_refreshPenaltyAnswerId) {
     _refreshPenaltyAnswerId = createAnswerSubmissionId();
     saveSeriesState();
   }
-  const queuePersistence = _enqueueOfflineSave(args, ownerAuthUserId);
+  const { item, persistence: queuePersistence } = _enqueueOfflineSave(args, ownerAuthUserId);
   pendingSupabaseSaves++;
   console.log("[progress] sauvegarde réponse en arrière-plan", {
     pendingSupabaseSaves,
@@ -1450,14 +1446,15 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
         });
         return false;
       }
-      let saved = await saveQuestionResult(...args);
-      if (!saved) {
-        console.warn("[progress] submit_answer échec — retry court");
-        await new Promise(r => setTimeout(r, 1200));
-        saved = await saveQuestionResult(...args);
+      const outcome = await _saveQueuedAnswer(item, 1200);
+      if (outcome.deferred) {
+        console.warn("[progress] sauvegarde différée — une réponse antérieure attend sa confirmation", {
+          clientAnswerId: item.clientAnswerId,
+          localSeriesId: item.localSeriesId
+        });
+        return false;
       }
-
-      if (!saved) {
+      if (!outcome.confirmed) {
         console.error("❌ Réponse non sauvegardée après retry submit_answer — mise en queue", {
           rollbackSnapshot,
           args,
@@ -1468,16 +1465,6 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
         return false;
       }
 
-      await _removeOfflineSave(clientAnswerId);
-      const assignedSeriesId = saved.series_id || activeSeriesId;
-      for (const queued of _offlineQueue) {
-        if (queued.localSeriesId !== localSeriesIdAtSubmit) continue;
-        queued.seriesId = assignedSeriesId;
-        queued.refreshPenaltyPending = _refreshPenaltyPending;
-        queued.refreshPenaltyApplied = _refreshPenaltyApplied;
-        queued.refreshPenaltyAnswerId = _refreshPenaltyAnswerId;
-        await window.LevelingMathOfflineQueue.put(queued);
-      }
       console.log("[progress] réponse sauvegardée en arrière-plan");
       return true;
     } catch(e) {
@@ -1490,11 +1477,13 @@ function submitAnswerInBackground(args, rollbackSnapshot) {
     } finally {
       pendingSupabaseSaves = Math.max(0, pendingSupabaseSaves - 1);
       console.log("[progress] sauvegarde arrière-plan terminée", { pendingSupabaseSaves });
+      _refreshSyncBannerState();
     }
   };
 
-  backgroundSaveChain = backgroundSaveChain.then(runSave, runSave);
-  return backgroundSaveChain;
+  const scheduledSave = _seriesSaveCoordinator.run(item, runSave);
+  backgroundSaveChain = _seriesSaveCoordinator.whenIdle();
+  return scheduledSave;
 }
 
 // ── Toast synchronisation réseau ────────────────────────────────────────────
@@ -1502,20 +1491,90 @@ function showSyncBanner(state) {
   const el = document.getElementById("sync-status-toast");
   if (!el) return;
   clearTimeout(_syncBannerTimeout);
+  _syncBannerTimeout = null;
   if (state === "pending") {
     el.className = "sync-pending";
     el.textContent = "⏳ Sauvegarde en attente…";
   } else if (state === "synced") {
     el.className = "sync-synced";
     el.textContent = "✅ Progression resynchronisée";
-    _syncBannerTimeout = setTimeout(() => { el.className = "sync-hidden"; }, 2500);
+    const timeoutId = setTimeout(() => {
+      if (_syncBannerTimeout !== timeoutId) return;
+      _syncBannerTimeout = null;
+      if (pendingSupabaseSaves > 0 || _offlineQueue.length > 0) {
+        showSyncBanner("pending");
+        return;
+      }
+      el.className = "sync-hidden";
+    }, 2500);
+    _syncBannerTimeout = timeoutId;
   } else {
     el.className = "sync-hidden";
   }
 }
 
+function _refreshSyncBannerState({ resynchronized = false } = {}) {
+  if (pendingSupabaseSaves > 0 || _offlineQueue.length > 0) {
+    showSyncBanner("pending");
+    return;
+  }
+  if (_retryInProgress) return;
+  if (_retryTimerId) {
+    clearInterval(_retryTimerId);
+    _retryTimerId = null;
+  }
+  const banner = document.getElementById("sync-status-toast");
+  if (!resynchronized && _syncBannerTimeout && banner?.className === "sync-synced") return;
+  showSyncBanner(resynchronized ? "synced" : "hidden");
+}
+
 // ── Queue de sauvegardes offline + retry ────────────────────────────────────
-async function _enqueueOfflineSave(args, ownerAuthUserId = getActiveStorageUserId()) {
+function _sameLogicalSeries(left, right) {
+  return !!left?.localSeriesId
+    && left.localSeriesId === right?.localSeriesId
+    && left.ownerAuthUserId === right?.ownerAuthUserId;
+}
+
+async function _persistQueuedSeriesIdentity(item) {
+  if (!item?.seriesId) return;
+  item.seriesId = _seriesSaveCoordinator.rememberSeriesId(item, item.seriesId);
+  _updatePersistedSeriesIdentity(item, item.seriesId);
+  const matchingItems = _offlineQueue.filter(queued => _sameLogicalSeries(queued, item));
+  for (const queued of matchingItems) {
+    queued.seriesId = item.seriesId;
+    queued.sessionId = item.sessionId;
+    queued.refreshPenaltyPending = item.refreshPenaltyPending;
+    queued.refreshPenaltyApplied = item.refreshPenaltyApplied;
+    queued.refreshPenaltyAnswerId = item.refreshPenaltyAnswerId;
+    await window.LevelingMathOfflineQueue.put(queued);
+  }
+}
+
+async function _saveQueuedAnswer(item, retryDelay) {
+  const queueIndex = _offlineQueue.findIndex(queued => queued.clientAnswerId === item.clientAnswerId);
+  if (queueIndex < 0) return { confirmed: true, alreadyHandled: true };
+  const hasEarlierAnswer = _offlineQueue
+    .slice(0, queueIndex)
+    .some(queued => _sameLogicalSeries(queued, item));
+  if (hasEarlierAnswer) return { confirmed: false, deferred: true };
+
+  let saved = await saveQuestionResult(...item.args, item);
+  if (item.seriesId) await _persistQueuedSeriesIdentity(item);
+  if (!saved) {
+    console.warn("[progress] submit_answer échec — retry court");
+    await new Promise(resolve => setTimeout(resolve, retryDelay));
+    saved = await saveQuestionResult(...item.args, item);
+    if (item.seriesId) await _persistQueuedSeriesIdentity(item);
+  }
+  if (!saved) return { confirmed: false };
+
+  item.seriesId = saved.series_id || item.seriesId;
+  await _persistQueuedSeriesIdentity(item);
+  await _removeOfflineSave(item.clientAnswerId);
+  return { confirmed: true, saved };
+}
+
+function _enqueueOfflineSave(args, ownerAuthUserId = getActiveStorageUserId()) {
   if (!activeLocalSeriesId) activeLocalSeriesId = createLocalSeriesId();
   const clientAnswerId = args[8];
   if (!clientAnswerId) throw new Error("Offline answer requires clientAnswerId");
@@ -1532,20 +1591,23 @@ async function _enqueueOfflineSave(args, ownerAuthUserId = getActiveStorageUserI
     ownerAuthUserId,
     createdAt: Date.now()
   };
+  item.seriesId = _seriesSaveCoordinator.getSeriesId(item);
   const existingIndex = _offlineQueue.findIndex(row => row.clientAnswerId === clientAnswerId);
   if (existingIndex >= 0) _offlineQueue[existingIndex] = item;
   else _offlineQueue.push(item);
-  await window.LevelingMathOfflineQueue.put(item);
+  const persistence = window.LevelingMathOfflineQueue.put(item).then(() => item);
   showSyncBanner("pending");
   if (!_retryTimerId) {
     _retryTimerId = setInterval(_flushOfflineQueue, 8000);
   }
   console.log("[offline-queue] enqueued", { queueLength: _offlineQueue.length, online: navigator.onLine });
+  return { item, persistence };
 }
 
 async function _removeOfflineSave(clientAnswerId){
   _offlineQueue = _offlineQueue.filter(item => item.clientAnswerId !== clientAnswerId);
   if (clientAnswerId) await window.LevelingMathOfflineQueue.remove(clientAnswerId);
+  _refreshSyncBannerState();
 }
 
 function _updatePersistedSeriesIdentity(item, assignedSeriesId){
@@ -1557,8 +1619,8 @@ function _updatePersistedSeriesIdentity(item, assignedSeriesId){
     const state = JSON.parse(raw);
     if (state.localSeriesId !== item.localSeriesId) return;
     state.supabaseSeriesId = assignedSeriesId;
-    state.refreshPenaltyApplied = _refreshPenaltyApplied;
-    state.refreshPenaltyAnswerId = _refreshPenaltyAnswerId;
+    state.refreshPenaltyApplied = !!item.refreshPenaltyApplied;
+    state.refreshPenaltyAnswerId = item.refreshPenaltyAnswerId || null;
     state.savedAt = Date.now();
     localStorage.setItem(storageKey, JSON.stringify(state));
   } catch (error) {
@@ -1569,109 +1631,66 @@ function _updatePersistedSeriesIdentity(item, assignedSeriesId){
 async function _hydrateOfflineQueue(ownerAuthUserId = getActiveStorageUserId()){
   if (!ownerAuthUserId || !window.LevelingMathOfflineQueue) return;
   const persisted = await window.LevelingMathOfflineQueue.list(ownerAuthUserId);
-  const byId = new Map(_offlineQueue.map(item => [item.clientAnswerId, item]));
+  const currentUserQueue = _offlineQueue.filter(item => !item.ownerAuthUserId || item.ownerAuthUserId === ownerAuthUserId);
+  const byId = new Map(currentUserQueue.map(item => [item.clientAnswerId, item]));
   persisted.forEach(item => byId.set(item.clientAnswerId, item));
   _offlineQueue = [...byId.values()].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  _seriesSaveCoordinator.seed(_offlineQueue);
   if (_offlineQueue.length > 0) {
     showSyncBanner("pending");
     if (!_retryTimerId) _retryTimerId = setInterval(_flushOfflineQueue, 8000);
+  } else {
+    _refreshSyncBannerState();
   }
 }
 
 async function _flushOfflineQueue() {
-  if (_retryInProgress || _offlineQueue.length === 0) return;
+  if (_retryInProgress) return;
+  if (_offlineQueue.length === 0) {
+    _refreshSyncBannerState();
+    return;
+  }
   _retryInProgress = true;
-  const savedSeriesId = activeSeriesId;
-  const savedLocalSeriesId = activeLocalSeriesId;
-  const savedSession  = activeSessionForQuiz;
-  const savedLevelKey = currentLevelKey;
-  const savedLevel = currentLevel;
-  const savedRefreshPenaltyPending = _refreshPenaltyPending;
-  const savedRefreshPenaltyApplied = _refreshPenaltyApplied;
-  const savedRefreshPenaltyAnswerId = _refreshPenaltyAnswerId;
-  let restoredSeriesId = savedSeriesId;
-  let restoredRefreshPenaltyPending = savedRefreshPenaltyPending;
-  let restoredRefreshPenaltyApplied = savedRefreshPenaltyApplied;
+  let synchronizedCount = 0;
   console.log("[offline-queue] flush start", { queueLength: _offlineQueue.length, online: navigator.onLine });
   try {
     while (_offlineQueue.length > 0) {
       const item = _offlineQueue[0];
       const currentAuthUserId = getActiveStorageUserId();
       if (item.ownerAuthUserId && currentAuthUserId && item.ownerAuthUserId !== currentAuthUserId) {
-        console.warn("[offline-queue] réponse d’un autre compte supprimée de la file", {
+        console.warn("[offline-queue] réponse d’un autre compte mise de côté; copie IndexedDB conservée", {
           ownerAuthUserId: item.ownerAuthUserId,
           currentAuthUserId
         });
         _offlineQueue.shift();
         continue;
       }
-      activeSeriesId       = item.seriesId;
-      activeLocalSeriesId  = item.localSeriesId;
-      activeSessionForQuiz = item.sessionId;
-      currentLevelKey = item.levelKey;
-      currentLevel = LEVELS[item.levelKey] || null;
-      _refreshPenaltyPending = !!item.refreshPenaltyPending;
-      _refreshPenaltyApplied = !!item.refreshPenaltyApplied;
-      _refreshPenaltyAnswerId = item.refreshPenaltyAnswerId || null;
-      _offlineReplayIsForInactiveSeries = item.localSeriesId !== savedLocalSeriesId;
-      _seriesStateWritesSuspended = _offlineReplayIsForInactiveSeries;
       pendingSupabaseSaves++;
-      let saved = false;
+      let outcome;
       try {
-        saved = await saveQuestionResult(...item.args);
-        if (!saved) {
-          await new Promise(r => setTimeout(r, 1500));
-          saved = await saveQuestionResult(...item.args);
-        }
+        const scheduledSave = _seriesSaveCoordinator.run(item, () => _saveQueuedAnswer(item, 1500));
+        backgroundSaveChain = _seriesSaveCoordinator.whenIdle();
+        outcome = await scheduledSave;
       } finally {
         pendingSupabaseSaves = Math.max(0, pendingSupabaseSaves - 1);
       }
-      if (!saved) {
+      if (!outcome?.confirmed) {
         console.warn("[offline-queue] retry échoué — toujours hors-ligne", { remaining: _offlineQueue.length });
         break;
       }
-      // Propager le series_id assigné par le RPC aux items suivants de la même série
-      const assignedId = activeSeriesId;
-      const localSeriesId = item.localSeriesId;
-      _updatePersistedSeriesIdentity(item, assignedId);
-      await _removeOfflineSave(item.clientAnswerId);
-      _offlineQueue.forEach(q => {
-        if (q.localSeriesId !== localSeriesId) return;
-        q.seriesId = assignedId;
-        q.refreshPenaltyPending = _refreshPenaltyPending;
-        q.refreshPenaltyApplied = _refreshPenaltyApplied;
-        q.refreshPenaltyAnswerId = _refreshPenaltyAnswerId;
-        window.LevelingMathOfflineQueue.put(q).catch(error => console.error("[offline-queue] update failed", error));
-      });
-      if (localSeriesId === savedLocalSeriesId) {
-        restoredSeriesId = assignedId;
-        restoredRefreshPenaltyPending = _refreshPenaltyPending;
-        restoredRefreshPenaltyApplied = _refreshPenaltyApplied;
-      }
+      if (!outcome.alreadyHandled) synchronizedCount++;
       console.log("[offline-queue] item synchronized", { remaining: _offlineQueue.length });
-    }
-    if (_offlineQueue.length === 0) {
-      clearInterval(_retryTimerId);
-      _retryTimerId = null;
-      showSyncBanner("synced");
-      syncXpFromServerQuietly("offline_flush");
-      console.log("[offline-queue] flush complete — tout synchronisé");
     }
   } catch (e) {
     console.error("[offline-queue] flush exception:", e);
   } finally {
-    _seriesStateWritesSuspended = false;
-    _offlineReplayIsForInactiveSeries = false;
-    activeSeriesId       = restoredSeriesId;
-    activeLocalSeriesId  = savedLocalSeriesId;
-    activeSessionForQuiz = savedSession;
-    currentLevelKey = savedLevelKey;
-    currentLevel = savedLevel;
-    _refreshPenaltyPending = restoredRefreshPenaltyPending;
-    _refreshPenaltyApplied = restoredRefreshPenaltyApplied;
-    _refreshPenaltyAnswerId = savedRefreshPenaltyAnswerId;
-    if (savedLocalSeriesId && restoredSeriesId !== savedSeriesId) saveSeriesState();
     _retryInProgress = false;
+    const fullyResynchronized = synchronizedCount > 0 && _offlineQueue.length === 0;
+    _refreshSyncBannerState({ resynchronized: fullyResynchronized });
+    if (fullyResynchronized) {
+      syncXpFromServerQuietly("offline_flush");
+      console.log("[offline-queue] flush complete — tout synchronisé");
+    }
   }
 }
 
@@ -2393,6 +2412,7 @@ async function submitTargetedResponse({ isCorrect, userAnswer, responseTime, equ
   } finally {
     pendingSupabaseSaves = Math.max(0, pendingSupabaseSaves - 1);
     isSubmitting = false;
+    _refreshSyncBannerState();
   }
 }
 

@@ -51,5 +51,22 @@ test("client-side projection writes are rejected", () => {
   assert.match(sql, /if tg_table_name = 'question_results' then/);
   assert.match(sql, /if tg_table_name = 'series_results' then/);
   assert.match(sql, /drop policy if exists "update all students"/);
-  assert.match(sql, /revoke all on function public\.submit_answer\(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text\) from public/);
+  assert.match(sql, /revoke all on function public\.submit_answer\(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text\)[\s\S]*?from public, anon, authenticated/);
+});
+
+test("browser RPC permissions explicitly remove legacy anonymous grants", () => {
+  for (const signature of [
+    "calculate_student_xp_projection\\(uuid, integer\\)",
+    "audit_xp_integrity\\(uuid\\)",
+    "repair_xp_integrity\\(uuid\\)",
+    "start_student_session\\(uuid\\)",
+    "admin_set_student_session\\(uuid, integer, integer\\)",
+    "submit_answer\\(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text, uuid\\)",
+    "submit_answer\\(uuid, uuid, integer, text, text, text, text, text, text, boolean, numeric, text\\)"
+  ]) {
+    assert.match(sql, new RegExp(
+      `revoke all on function public\\.${signature}[\\s\\S]*?from public, anon, authenticated`
+    ));
+  }
+  assert.doesNotMatch(sql, /grant execute on function[^;]+to anon/);
 });

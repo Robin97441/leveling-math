@@ -63,5 +63,68 @@
       .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   }
 
-  root.LevelingMathOfflineQueue = { put, remove, list };
+  function createSeriesSaveCoordinator() {
+    const remoteSeriesIds = new Map();
+    let saveChain = Promise.resolve();
+
+    function getSeriesKey(item) {
+      if (!item?.ownerAuthUserId || !item?.localSeriesId) return null;
+      return `${item.ownerAuthUserId}:${item.localSeriesId}`;
+    }
+
+    function rememberSeriesId(item, seriesId) {
+      const key = getSeriesKey(item);
+      if (!key || !seriesId) return seriesId || null;
+      const knownSeriesId = remoteSeriesIds.get(key);
+      if (knownSeriesId && knownSeriesId !== seriesId) {
+        console.error("[offline-queue] conflicting remote series identity", {
+          localSeriesId: item.localSeriesId,
+          knownSeriesId,
+          receivedSeriesId: seriesId
+        });
+        return knownSeriesId;
+      }
+      remoteSeriesIds.set(key, seriesId);
+      return seriesId;
+    }
+
+    function getSeriesId(item) {
+      const key = getSeriesKey(item);
+      return (key && remoteSeriesIds.get(key)) || item?.seriesId || null;
+    }
+
+    function seed(items) {
+      for (const item of items || []) {
+        if (item?.seriesId) rememberSeriesId(item, item.seriesId);
+      }
+      for (const item of items || []) {
+        const knownSeriesId = getSeriesId(item);
+        if (knownSeriesId) item.seriesId = knownSeriesId;
+      }
+    }
+
+    function run(item, operation) {
+      const execute = async () => {
+        const knownSeriesId = getSeriesId(item);
+        if (knownSeriesId) item.seriesId = knownSeriesId;
+        const result = await operation(item);
+        const assignedSeriesId = result?.series_id || item?.seriesId || null;
+        if (assignedSeriesId) {
+          item.seriesId = rememberSeriesId(item, assignedSeriesId);
+        }
+        return result;
+      };
+      const scheduled = saveChain.then(execute, execute);
+      saveChain = scheduled.catch(() => false);
+      return scheduled;
+    }
+
+    function whenIdle() {
+      return saveChain;
+    }
+
+    return { getSeriesId, rememberSeriesId, run, seed, whenIdle };
+  }
+
+  root.LevelingMathOfflineQueue = { put, remove, list, createSeriesSaveCoordinator };
 })(typeof globalThis !== "undefined" ? globalThis : window);
